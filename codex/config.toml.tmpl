@@ -1,0 +1,47 @@
+# Codex config 模板 —— 新机器上拷到 ~/.codex/config.toml 后填空。
+#
+# 这里只保留可移植的偏好。以下东西**故意不入库**，因为它们要么是机器专属，
+# 要么是凭证：
+#   - auth.json（凭证，永远不要提交）
+#   - [projects."/abs/path"] trust_level（一堆本机绝对路径，新机器上 Codex 会自己长出来）
+#   - model_catalog_json 的绝对路径
+#   - 私有网关的 base_url / IP
+
+model_provider = "cm"
+model = "gpt-5.6-sol"
+review_model = "gpt-5.6-sol"
+
+personality = "none"
+
+model_reasoning_effort = "max"
+plan_mode_reasoning_effort = "max"
+
+model_reasoning_summary = "detailed"
+model_supports_reasoning_summaries = true
+model_verbosity = "high"
+
+web_search = "live"
+service_tier = "fast"
+
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+allow_login_shell = true
+
+# 填成本机 codex-manager 的 gateway-models.json 路径
+# model_catalog_json = "/PATH/TO/codex-profiles/<hash>/gateway-models.json"
+
+[model_providers.cm]
+name = "CodexManager"
+base_url = "http://127.0.0.1:48761/v1"
+wire_api = "responses"
+supports_websockets = false
+
+# 私有网关：base_url 填成你自己的地址，不要把真实 IP 提交到公开仓库
+# [model_providers.naiveai]
+# name = "naiveai"
+# base_url = "http://<YOUR-GATEWAY-HOST>:8081/v1"
+# wire_api = "responses"
+# requires_openai_auth = true
+
+[notice]
+hide_rate_limit_model_nudge = true

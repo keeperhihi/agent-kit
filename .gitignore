@@ -1,0 +1,22 @@
+# 白名单式忽略：默认忽略一切，只放行下面显式列出的路径。
+# 这样做是因为这个仓库紧挨着 ~/.claude / ~/.codex，误拷一个凭证或 6GB 的
+# sqlite 日志进来的代价太大。新增顶层目录时，记得在这里补一行 !/<名字>/**
+*
+!*/
+!/.gitignore
+!/README.md
+!/install.sh
+!/claude/**
+!/codex/**
+!/skills/**
+!/vendor/**
+
+# 放行区里再剔除绝不能入库的东西（防手滑 cp）
+*.sqlite
+*.sqlite-*
+*.jsonl
+**/auth.json
+**/.credentials.json
+**/.claude.json
+**/settings.local.json
+**/*.bak.*

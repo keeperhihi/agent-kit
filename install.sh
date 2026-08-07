@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+# 把本仓库安装到 ~/.claude（默认）和/或 ~/.codex。
+# 除 settings.json 外一律用符号链接：在任何机器上改了 skill，仓库里 git diff 直接看得到。
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+CODEX_DIR="$HOME/.codex"
+
+TARGET=claude
+MODE=install
+DRY=0
+FORCE=0
+VENDOR=1
+STAMP="$(date +%Y%m%d%H%M%S)"
+rc=0
+
+usage() {
+  cat <<'EOF'
+用法: ./install.sh [选项]
+
+  --target claude|codex|both   安装目标（默认 claude）
+  --no-vendor                  跳过 vendor/skills（第三方 skill）
+  --dry-run                    只打印将要做什么
+  --force                      已存在的目标先备份为 <path>.bak.<时间戳> 再覆盖
+  --status                     只检查安装状态，不改动任何东西
+  --uninstall                  移除本仓库装出去的符号链接（不动普通文件）
+  -h, --help                   显示本帮助
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target) TARGET="${2:?--target 需要参数}"; shift 2 ;;
+    --no-vendor) VENDOR=0; shift ;;
+    --dry-run) DRY=1; shift ;;
+    --force) FORCE=1; shift ;;
+    --status) MODE=status; shift ;;
+    --uninstall) MODE=uninstall; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "未知选项: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+case "$TARGET" in claude|codex|both) ;; *) echo "--target 只能是 claude / codex / both" >&2; exit 2 ;; esac
+
+say()  { printf '  %s\n' "$*"; }
+warn() { printf '  ! %s\n' "$*"; rc=1; }
+run()  { if [ "$DRY" = 1 ]; then printf '  [dry-run] %s\n' "$*"; else eval "$@"; fi; }
+
+# 目标是不是本仓库装出去的链接
+owned_by_repo() { [ -L "$1" ] && case "$(readlink -f "$1" || true)" in "$REPO"/*) return 0 ;; esac; return 1; }
+
+link() { # link <仓库内源> <目标路径> <显示名>
+  local src="$1" dst="$2" name="$3"
+  if [ ! -e "$src" ]; then warn "$name: 源不存在 $src"; return; fi
+  if [ -L "$dst" ] && [ "$(readlink -f "$dst" || true)" = "$(readlink -f "$src")" ]; then
+    say "= $name (已链接)"; return
+  fi
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    if [ "$FORCE" = 1 ]; then
+      run "mv -- '$dst' '$dst.bak.$STAMP'"; say "~ $name: 原文件已备份为 $(basename "$dst").bak.$STAMP"
+    else
+      warn "$name: $dst 已存在且不是本仓库的链接 —— 跳过（--force 可备份后覆盖）"; return
+    fi
+  fi
+  run "mkdir -p -- '$(dirname "$dst")'"
+  run "ln -s -- '$src' '$dst'"
+  say "+ $name"
+}
+
+copyfile() { # copyfile <仓库内源> <目标路径> <显示名>
+  local src="$1" dst="$2" name="$3"
+  if [ ! -f "$src" ]; then warn "$name: 源不存在 $src"; return; fi
+  if [ -f "$dst" ] && cmp -s "$src" "$dst"; then say "= $name (内容一致)"; return; fi
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    if [ "$FORCE" = 1 ]; then
+      run "cp -- '$dst' '$dst.bak.$STAMP'"; say "~ $name: 原文件已备份为 $(basename "$dst").bak.$STAMP"
+    else
+      warn "$name: $dst 与仓库版本不一致 —— 跳过。想入库: cp '$dst' '$src'；想覆盖: --force"; return
+    fi
+  fi
+  run "mkdir -p -- '$(dirname "$dst")'"
+  run "cp -- '$src' '$dst'"
+  say "+ $name"
+}
+
+link_skills() { # link_skills <目标 skills 目录>
+  local into="$1" d n
+  for d in "$REPO"/skills/*/; do n="$(basename "$d")"; link "${d%/}" "$into/$n" "skill $n"; done
+  if [ "$VENDOR" = 1 ]; then
+    for d in "$REPO"/vendor/skills/*/; do n="$(basename "$d")"; link "${d%/}" "$into/$n" "vendor skill $n"; done
+  fi
+}
+
+link_dir_files() { # link_dir_files <仓库子目录> <目标目录> <标签>
+  local from="$1" into="$2" label="$3" f n
+  for f in "$from"/*.md; do [ -e "$f" ] || continue; n="$(basename "$f")"; link "$f" "$into/$n" "$label $n"; done
+}
+
+install_claude() {
+  echo "→ $CLAUDE_DIR"
+  link "$REPO/claude/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
+  copyfile "$REPO/claude/settings.json" "$CLAUDE_DIR/settings.json" "settings.json"
+  link_skills "$CLAUDE_DIR/skills"
+  link_dir_files "$REPO/claude/agents"   "$CLAUDE_DIR/agents"   "agent"
+  link_dir_files "$REPO/claude/commands" "$CLAUDE_DIR/commands" "command"
+}
+
+install_codex() {
+  echo "→ $CODEX_DIR"
+  link "$REPO/codex/AGENTS.md" "$CODEX_DIR/AGENTS.md" "AGENTS.md"
+  link_skills "$CODEX_DIR/skills"
+  [ -f "$CODEX_DIR/config.toml" ] \
+    && say "= config.toml 已存在，未改动（模板见 codex/config.toml.tmpl）" \
+    || warn "config.toml 不存在 —— 手动: cp codex/config.toml.tmpl $CODEX_DIR/config.toml 后填空"
+}
+
+uninstall_from() { # uninstall_from <配置目录>
+  local base="$1" p n
+  echo "→ $base"
+  for p in "$base/CLAUDE.md" "$base/AGENTS.md"; do
+    owned_by_repo "$p" && { run "rm -- '$p'"; say "- $(basename "$p")"; }
+  done
+  for n in skills agents commands; do
+    [ -d "$base/$n" ] || continue
+    for p in "$base/$n"/*; do
+      [ -e "$p" ] || [ -L "$p" ] || continue
+      owned_by_repo "$p" && { run "rm -- '$p'"; say "- $n/$(basename "$p")"; }
+    done
+    [ "$DRY" = 1 ] || rmdir "$base/$n" 2>/dev/null || true
+  done
+  [ -f "$base/settings.json" ] && say "= settings.json 是拷贝不是链接，保留未动"
+  return 0
+}
+
+status_of() { # status_of <配置目录> <指令文件名>
+  local base="$1" doc="$2" p n ok=0 bad=0
+  echo "→ $base"
+  if owned_by_repo "$base/$doc"; then say "= $doc → 仓库"
+  elif [ -e "$base/$doc" ]; then warn "$doc 存在但不指向仓库"
+  else warn "$doc 未安装"; fi
+  for n in skills agents commands; do
+    [ -d "$base/$n" ] || continue
+    ok=0; bad=0
+    for p in "$base/$n"/*; do
+      [ -e "$p" ] || [ -L "$p" ] || continue
+      if owned_by_repo "$p"; then ok=$((ok+1)); else bad=$((bad+1)); fi
+    done
+    say "$n/: $ok 个来自仓库$([ $bad -gt 0 ] && echo "，$bad 个来自别处")"
+  done
+  if [ -f "$base/settings.json" ] && [ -f "$REPO/claude/settings.json" ]; then
+    cmp -s "$REPO/claude/settings.json" "$base/settings.json" \
+      && say "= settings.json 与仓库一致" \
+      || warn "settings.json 与仓库不一致 —— 入库: cp '$base/settings.json' '$REPO/claude/settings.json'"
+  fi
+  return 0
+}
+
+echo "仓库: $REPO"
+want_claude() { [ "$TARGET" = claude ] || [ "$TARGET" = both ]; }
+want_codex()  { [ "$TARGET" = codex ]  || [ "$TARGET" = both ]; }
+
+case "$MODE" in
+  install)
+    if want_claude; then install_claude; fi
+    if want_codex;  then install_codex;  fi
+    ;;
+  uninstall)
+    if want_claude; then uninstall_from "$CLAUDE_DIR"; fi
+    if want_codex;  then uninstall_from "$CODEX_DIR";  fi
+    ;;
+  status)
+    if want_claude; then status_of "$CLAUDE_DIR" CLAUDE.md; fi
+    if want_codex;  then status_of "$CODEX_DIR" AGENTS.md; fi
+    ;;
+esac
+
+[ "$rc" = 0 ] && echo "完成。" || echo "完成，但有上面标 ! 的项需要你确认。"
+exit "$rc"
