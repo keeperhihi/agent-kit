@@ -1,0 +1,8 @@
+{
+  "display": {
+    "showAgents": true,
+    "showTodos": true,
+    "showSessionName": true,
+    "showEffortLevel": true
+  }
+}

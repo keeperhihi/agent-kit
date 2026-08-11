@@ -1,15 +1,17 @@
-# agent-config
+# agent-kit
 
 我的 coding agent 配置：全局指令 + skills，一份内容同时给 **Claude Code**（`~/.claude`）和 **Codex**（`~/.codex`）用。
 
 新机器上：
 
 ```bash
-git clone <this-repo> ~/workspace/agent-config
-cd ~/workspace/agent-config
+git clone <repo-url>
+cd <repo-directory>
 ./install.sh                    # 装到 ~/.claude
 ./install.sh --target both      # 顺带装到 ~/.codex
 ```
+
+Claude Code 插件的本体仍由官方插件管理器安装；首次安装/初始化命令见各插件的 `claude/plugins/<plugin-name>/README.md`。`install.sh` 只负责链接其可移植配置。
 
 ## 结构
 
@@ -22,6 +24,7 @@ claude/
   settings.json  可提交的那部分设置
   agents/        自定义 subagent（*.md）
   commands/      自定义 slash command（*.md）
+  plugins/       插件安装配方 + 可移植配置（不包含插件本体与缓存）
 codex/
   AGENTS.md      → 符号链接到 ../claude/CLAUDE.md，两边永远同一份内容
   config.toml.tmpl  Codex 配置模板，机器专属部分留空待填
@@ -41,23 +44,25 @@ install.sh
 ./install.sh --uninstall          # 只删本仓库装出去的符号链接
 ```
 
-默认**不覆盖任何已存在的文件**——遇到冲突就跳过并打印提示，要覆盖得显式 `--force`（会先备份）。`--uninstall` 只删指向本仓库的符号链接，普通文件一律不碰。
+默认**不覆盖任何内容不同的已存文件**——遇到冲突就跳过并打印提示，要覆盖得显式 `--force`（会先备份）。插件受管文件如果与仓库内容完全一致，会直接安全接管为符号链接。`--uninstall` 只删指向本仓库的符号链接，普通文件一律不碰。
 
 ## 几个设计决定
 
-**除 settings.json 外一律用符号链接。** 在哪台机器上改了 skill，仓库里 `git diff` 立刻看得到，不用记着同步回来——这是这个仓库的全部意义。Claude Code 的 skill 加载器显式接受符号链接目录，所以这条路走得通。
+**除 settings.json 外，仓库受管文件一律用符号链接。** 在哪台机器上改了 skill 或插件配置，仓库里 `git diff` 立刻看得到，不用记着同步回来——这是这个仓库的全部意义。Claude Code 的 skill 加载器显式接受符号链接目录，所以这条路走得通。
 
-**settings.json 是拷贝，不是链接。** 因为 Claude Code 自己会重写它（`/model`、`/config`、主题切换都会写），做成链接的话每次调档位都会弄脏仓库。想把本机改动收回仓库：
+**settings.json 是拷贝，不是链接。** 因为 Claude Code 自己会重写它（`/model`、`/config`、主题切换都会写），做成链接的话每次调档位都会弄脏仓库。想把本机改动收回仓库时先检查差异：
 
 ```bash
-cp ~/.claude/settings.json claude/settings.json
+diff -u claude/settings.json ~/.claude/settings.json
 ```
 
-`./install.sh --status` 会提示两边是否已经漂移。
+确认不包含凭证、本机绝对路径或插件生成的机器专属字段后，再手工合并。特别是插件可能写入 `extraKnownMarketplaces`、`enabledPlugins` 和 `statusLine`，其中 Marketplace 安装路径与 `statusLine.command` 可能是本机绝对路径。`./install.sh --status` 会提示两边是否已经漂移。
 
 **skill 里不写死 "Codex" 或 "Claude"，统一说 "the agent"。** 这是一份 skill 能被两个 agent 共用的前提，比维护两份分叉划算。新写 skill 时请守住这条。
 
 **`vendor/` 里的第三方 skill 直接 vendoring 进来（共 376K 纯 markdown），不依赖任何 skill 安装器。** 新机器上 clone 完就能用，代价是它们会随上游更新而变旧——需要时照 `vendor/skill-lock.json` 里的 source 重新同步。
+
+**Claude Code 插件不 vendoring。** `claude/plugins/<plugin-name>/README.md` 记录首次安装/初始化命令，`files/` 则镜像到 `~/.claude/plugins/<plugin-name>/` 下需要跨机器同步的文件。`install.sh` 会自动发现所有插件的 `files/` 文件树，所以以后新增插件无需改脚本。详见 [`claude/plugins/README.md`](claude/plugins/README.md)。
 
 ## 从 Codex 迁过来时改了什么
 
@@ -75,4 +80,5 @@ cp ~/.claude/settings.json claude/settings.json
 - `history.jsonl`、`session_index.jsonl`、`sessions/`
 - `*.sqlite*`（Codex 那个 `logs_2.sqlite` 有 6.4 GB）
 - `settings.local.json`（机器专属设置与密钥放这里）
+- Claude 插件的 `cache/`、`marketplaces/`、`installed_plugins.json`、`known_marketplaces.json` 以及会话派生缓存
 - Codex `config.toml` 里的 `[projects."/abs/path"]` 信任列表、`model_catalog_json` 绝对路径、私有网关 IP —— 所以入库的是 `config.toml.tmpl` 而不是 `config.toml`

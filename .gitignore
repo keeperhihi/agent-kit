@@ -11,6 +11,27 @@
 !/skills/**
 !/vendor/**
 
+# claude/plugins/ 只允许安装说明与 files/ 中的可移植配置。
+# 即使误把 ~/.claude/plugins/ 复制进来，也不会放行缓存、Marketplace 或注册表。
+/claude/plugins/*
+!/claude/plugins/README.md
+!/claude/plugins/*/
+/claude/plugins/*/*
+!/claude/plugins/*/README.md
+!/claude/plugins/*/files/
+!/claude/plugins/*/files/**
+/claude/plugins/cache/
+/claude/plugins/marketplaces/
+/claude/plugins/installed_plugins.json
+/claude/plugins/known_marketplaces.json
+/claude/plugins/*/files/**/config-cache/
+/claude/plugins/*/files/**/context-cache/
+/claude/plugins/*/files/**/transcript-cache/
+/claude/plugins/*/files/**/cache/
+/claude/plugins/*/files/**/marketplaces/
+/claude/plugins/*/files/**/installed_plugins.json
+/claude/plugins/*/files/**/known_marketplaces.json
+
 # 放行区里再剔除绝不能入库的东西（防手滑 cp）
 *.sqlite
 *.sqlite-*

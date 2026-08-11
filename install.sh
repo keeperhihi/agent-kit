@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 把本仓库安装到 ~/.claude（默认）和/或 ~/.codex。
-# 除 settings.json 外一律用符号链接：在任何机器上改了 skill，仓库里 git diff 直接看得到。
+# 除 settings.json 外一律用符号链接：在任何机器上改了受管文件，仓库里 git diff 直接看得到。
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,27 +46,62 @@ case "$TARGET" in claude|codex|both) ;; *) echo "--target 只能是 claude / cod
 
 say()  { printf '  %s\n' "$*"; }
 warn() { printf '  ! %s\n' "$*"; rc=1; }
-run()  { if [ "$DRY" = 1 ]; then printf '  [dry-run] %s\n' "$*"; else eval "$@"; fi; }
+run()  {
+  if [ "$DRY" = 1 ]; then
+    printf '  [dry-run]'
+    printf ' %q' "$@"
+    printf '\n'
+  else
+    "$@"
+  fi
+}
 
 # 目标是不是本仓库装出去的链接
 owned_by_repo() { [ -L "$1" ] && case "$(readlink -f "$1" || true)" in "$REPO"/*) return 0 ;; esac; return 1; }
+owned_plugin_file() {
+  local target rest plugin file
+  [ -L "$1" ] || return 1
+  target="$(readlink "$1" || true)"
+  case "$target" in "$REPO"/claude/plugins/*) ;; *) return 1 ;; esac
+  rest="${target#"$REPO"/claude/plugins/}"
+  plugin="${rest%%/*}"
+  [ -n "$plugin" ] && [ "$plugin" != "$rest" ] || return 1
+  rest="${rest#*/}"
+  case "$rest" in files/*) ;; *) return 1 ;; esac
+  file="${rest#files/}"
+  [ -n "$file" ] || return 1
+  case "/$plugin/$file/" in *"//"*|*/./*|*/../*) return 1 ;; esac
+  return 0
+}
+linked_to() { [ -L "$2" ] && [ "$(readlink -f "$2" || true)" = "$(readlink -f "$1" || true)" ]; }
 
 link() { # link <仓库内源> <目标路径> <显示名>
   local src="$1" dst="$2" name="$3"
   if [ ! -e "$src" ]; then warn "$name: 源不存在 $src"; return; fi
-  if [ -L "$dst" ] && [ "$(readlink -f "$dst" || true)" = "$(readlink -f "$src")" ]; then
+  if linked_to "$src" "$dst"; then
     say "= $name (已链接)"; return
   fi
   if [ -e "$dst" ] || [ -L "$dst" ]; then
     if [ "$FORCE" = 1 ]; then
-      run "mv -- '$dst' '$dst.bak.$STAMP'"; say "~ $name: 原文件已备份为 $(basename "$dst").bak.$STAMP"
+      run mv -- "$dst" "$dst.bak.$STAMP"; say "~ $name: 原文件已备份为 $(basename "$dst").bak.$STAMP"
     else
       warn "$name: $dst 已存在且不是本仓库的链接 —— 跳过（--force 可备份后覆盖）"; return
     fi
   fi
-  run "mkdir -p -- '$(dirname "$dst")'"
-  run "ln -s -- '$src' '$dst'"
+  run mkdir -p -- "$(dirname "$dst")"
+  run ln -s -- "$src" "$dst"
   say "+ $name"
+}
+
+link_plugin_file() { # 内容一致的本机普通文件可安全接管为插件配置链接
+  local src="$1" dst="$2" name="$3"
+  if [ -f "$src" ] && [ -f "$dst" ] && [ ! -L "$dst" ] && cmp -s "$src" "$dst"; then
+    run rm -- "$dst"
+    run ln -s -- "$src" "$dst"
+    say "~ $name: 内容一致，已接管为链接"
+    return
+  fi
+  link "$src" "$dst" "$name"
 }
 
 copyfile() { # copyfile <仓库内源> <目标路径> <显示名>
@@ -75,13 +110,13 @@ copyfile() { # copyfile <仓库内源> <目标路径> <显示名>
   if [ -f "$dst" ] && cmp -s "$src" "$dst"; then say "= $name (内容一致)"; return; fi
   if [ -e "$dst" ] || [ -L "$dst" ]; then
     if [ "$FORCE" = 1 ]; then
-      run "cp -- '$dst' '$dst.bak.$STAMP'"; say "~ $name: 原文件已备份为 $(basename "$dst").bak.$STAMP"
+      run cp -- "$dst" "$dst.bak.$STAMP"; say "~ $name: 原文件已备份为 $(basename "$dst").bak.$STAMP"
     else
-      warn "$name: $dst 与仓库版本不一致 —— 跳过。想入库: cp '$dst' '$src'；想覆盖: --force"; return
+      warn "$name: $dst 与仓库版本不一致 —— 跳过。先检查: diff -u '$src' '$dst'；想覆盖: --force"; return
     fi
   fi
-  run "mkdir -p -- '$(dirname "$dst")'"
-  run "cp -- '$src' '$dst'"
+  run mkdir -p -- "$(dirname "$dst")"
+  run cp -- "$src" "$dst"
   say "+ $name"
 }
 
@@ -98,6 +133,87 @@ link_dir_files() { # link_dir_files <仓库子目录> <目标目录> <标签>
   for f in "$from"/*.md; do [ -e "$f" ] || continue; n="$(basename "$f")"; link "$f" "$into/$n" "$label $n"; done
 }
 
+managed_repo_file() { # managed_repo_file <仓库内文件>
+  local f="$1" repo_rel check_rc
+  repo_rel="${f#"$REPO"/}"
+  if git -C "$REPO" check-ignore --no-index -q -- "$repo_rel" 2>/dev/null; then
+    return 1
+  else
+    check_rc=$?
+  fi
+  [ "$check_rc" = 1 ] && return 0
+  warn "无法检查插件文件的忽略规则，已跳过: $repo_rel"
+  return 1
+}
+
+link_tree_files() { # link_tree_files <仓库文件树> <目标目录> <标签>
+  local from="$1" into="$2" label="$3" f rel
+  local -a files=()
+  [ -d "$from" ] || return 0
+  mapfile -d '' -t files < <(find "$from" -type f -print0)
+  for f in "${files[@]}"; do
+    managed_repo_file "$f" || continue
+    rel="${f#"$from"/}"
+    link_plugin_file "$f" "$into/$rel" "$label $rel"
+  done
+}
+
+install_plugin_files() {
+  local d name
+  [ -d "$REPO/claude/plugins" ] || return 0
+  for d in "$REPO"/claude/plugins/*/; do
+    d="${d%/}"
+    [ -d "$d/files" ] || continue
+    name="$(basename "$d")"
+    link_tree_files "$d/files" "$CLAUDE_DIR/plugins/$name" "plugin $name"
+  done
+}
+
+status_plugin_files() {
+  local d name f rel dst
+  local -a files=()
+  [ -d "$REPO/claude/plugins" ] || return 0
+  for d in "$REPO"/claude/plugins/*/; do
+    d="${d%/}"
+    [ -d "$d/files" ] || continue
+    name="$(basename "$d")"
+    files=()
+    mapfile -d '' -t files < <(find "$d/files" -type f -print0)
+    for f in "${files[@]}"; do
+      managed_repo_file "$f" || continue
+      rel="${f#"$d/files/"}"
+      dst="$CLAUDE_DIR/plugins/$name/$rel"
+      if linked_to "$f" "$dst"; then
+        say "= plugin $name $rel → 仓库"
+      elif [ -e "$dst" ] || [ -L "$dst" ]; then
+        warn "plugin $name $rel 存在但不指向仓库"
+      else
+        warn "plugin $name $rel 未安装"
+      fi
+    done
+  done
+}
+
+uninstall_plugin_files() {
+  local root="$CLAUDE_DIR/plugins" p rel dir
+  [ -d "$root" ] || return 0
+  while IFS= read -r -d '' p; do
+    owned_plugin_file "$p" || continue
+    rel="${p#"$root"/}"
+    run rm -- "$p"
+    say "- plugin $rel"
+    if [ "$DRY" = 0 ]; then
+      dir="$(dirname "$p")"
+      while [ "$dir" != "$root" ]; do
+        rmdir "$dir" 2>/dev/null || break
+        dir="$(dirname "$dir")"
+      done
+    fi
+  done < <(find "$root" \
+    -type d \( -name cache -o -name marketplaces -o -name config-cache -o -name context-cache -o -name transcript-cache \) -prune -o \
+    -type l -print0)
+}
+
 install_claude() {
   echo "→ $CLAUDE_DIR"
   link "$REPO/claude/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
@@ -105,6 +221,7 @@ install_claude() {
   link_skills "$CLAUDE_DIR/skills"
   link_dir_files "$REPO/claude/agents"   "$CLAUDE_DIR/agents"   "agent"
   link_dir_files "$REPO/claude/commands" "$CLAUDE_DIR/commands" "command"
+  install_plugin_files
 }
 
 install_codex() {
@@ -120,13 +237,13 @@ uninstall_from() { # uninstall_from <配置目录>
   local base="$1" p n
   echo "→ $base"
   for p in "$base/CLAUDE.md" "$base/AGENTS.md"; do
-    owned_by_repo "$p" && { run "rm -- '$p'"; say "- $(basename "$p")"; }
+    owned_by_repo "$p" && { run rm -- "$p"; say "- $(basename "$p")"; }
   done
   for n in skills agents commands; do
     [ -d "$base/$n" ] || continue
     for p in "$base/$n"/*; do
       [ -e "$p" ] || [ -L "$p" ] || continue
-      owned_by_repo "$p" && { run "rm -- '$p'"; say "- $n/$(basename "$p")"; }
+      owned_by_repo "$p" && { run rm -- "$p"; say "- $n/$(basename "$p")"; }
     done
     [ "$DRY" = 1 ] || rmdir "$base/$n" 2>/dev/null || true
   done
@@ -152,7 +269,7 @@ status_of() { # status_of <配置目录> <指令文件名>
   if [ -f "$base/settings.json" ] && [ -f "$REPO/claude/settings.json" ]; then
     cmp -s "$REPO/claude/settings.json" "$base/settings.json" \
       && say "= settings.json 与仓库一致" \
-      || warn "settings.json 与仓库不一致 —— 入库: cp '$base/settings.json' '$REPO/claude/settings.json'"
+      || warn "settings.json 与仓库不一致 —— 先检查: diff -u '$REPO/claude/settings.json' '$base/settings.json'"
   fi
   return 0
 }
@@ -167,11 +284,11 @@ case "$MODE" in
     if want_codex;  then install_codex;  fi
     ;;
   uninstall)
-    if want_claude; then uninstall_from "$CLAUDE_DIR"; fi
+    if want_claude; then uninstall_from "$CLAUDE_DIR"; uninstall_plugin_files; fi
     if want_codex;  then uninstall_from "$CODEX_DIR";  fi
     ;;
   status)
-    if want_claude; then status_of "$CLAUDE_DIR" CLAUDE.md; fi
+    if want_claude; then status_of "$CLAUDE_DIR" CLAUDE.md; status_plugin_files; fi
     if want_codex;  then status_of "$CODEX_DIR" AGENTS.md; fi
     ;;
 esac
