@@ -9,6 +9,7 @@
 !/claude/**
 !/codex/**
 !/skills/**
+!/tests/**
 !/vendor/**
 
 # claude/plugins/ 只允许安装说明与 files/ 中的可移植配置。

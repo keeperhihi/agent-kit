@@ -148,14 +148,12 @@ managed_repo_file() { # managed_repo_file <仓库内文件>
 
 link_tree_files() { # link_tree_files <仓库文件树> <目标目录> <标签>
   local from="$1" into="$2" label="$3" f rel
-  local -a files=()
   [ -d "$from" ] || return 0
-  mapfile -d '' -t files < <(find "$from" -type f -print0)
-  for f in "${files[@]}"; do
+  while IFS= read -r -d '' f; do
     managed_repo_file "$f" || continue
     rel="${f#"$from"/}"
     link_plugin_file "$f" "$into/$rel" "$label $rel"
-  done
+  done < <(find "$from" -type f -print0)
 }
 
 install_plugin_files() {
@@ -171,15 +169,12 @@ install_plugin_files() {
 
 status_plugin_files() {
   local d name f rel dst
-  local -a files=()
   [ -d "$REPO/claude/plugins" ] || return 0
   for d in "$REPO"/claude/plugins/*/; do
     d="${d%/}"
     [ -d "$d/files" ] || continue
     name="$(basename "$d")"
-    files=()
-    mapfile -d '' -t files < <(find "$d/files" -type f -print0)
-    for f in "${files[@]}"; do
+    while IFS= read -r -d '' f; do
       managed_repo_file "$f" || continue
       rel="${f#"$d/files/"}"
       dst="$CLAUDE_DIR/plugins/$name/$rel"
@@ -190,7 +185,7 @@ status_plugin_files() {
       else
         warn "plugin $name $rel 未安装"
       fi
-    done
+    done < <(find "$d/files" -type f -print0)
   done
 }
 
