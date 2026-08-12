@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 把本仓库安装到 ~/.claude（默认）和/或 ~/.codex。
-# 除 settings.json 外一律用符号链接：在任何机器上改了受管文件，仓库里 git diff 直接看得到。
+# settings.json 作为 overlay 合并；其他受管文件使用符号链接。
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +22,7 @@ usage() {
   --target claude|codex|both   安装目标（默认 claude）
   --no-vendor                  跳过 vendor/skills（第三方 skill）
   --dry-run                    只打印将要做什么
-  --force                      已存在的目标先备份为 <path>.bak.<时间戳> 再覆盖
+  --force                      覆盖已有目标前备份；settings 合并前也创建备份
   --status                     只检查安装状态，不改动任何东西
   --uninstall                  移除本仓库装出去的符号链接（不动普通文件）
   -h, --help                   显示本帮助
@@ -104,20 +104,98 @@ link_plugin_file() { # 内容一致的本机普通文件可安全接管为插件
   link "$src" "$dst" "$name"
 }
 
-copyfile() { # copyfile <仓库内源> <目标路径> <显示名>
-  local src="$1" dst="$2" name="$3"
-  if [ ! -f "$src" ]; then warn "$name: 源不存在 $src"; return; fi
-  if [ -f "$dst" ] && cmp -s "$src" "$dst"; then say "= $name (内容一致)"; return; fi
-  if [ -e "$dst" ] || [ -L "$dst" ]; then
-    if [ "$FORCE" = 1 ]; then
-      run cp -- "$dst" "$dst.bak.$STAMP"; say "~ $name: 原文件已备份为 $(basename "$dst").bak.$STAMP"
-    else
-      warn "$name: $dst 与仓库版本不一致 —— 跳过。先检查: diff -u '$src' '$dst'；想覆盖: --force"; return
-    fi
+require_jq() {
+  if command -v jq >/dev/null 2>&1; then return 0; fi
+  warn "settings.json 合并需要 jq，已跳过"
+  return 1
+}
+
+json_object() { jq -e 'type == "object"' "$1" >/dev/null 2>&1; }
+
+settings_overlay_applied() { # settings_overlay_applied <本机设置> <仓库 overlay>
+  jq -e -s '(.[0] * .[1]) == .[0]' "$1" "$2" >/dev/null 2>&1
+}
+
+install_settings() { # install_settings <仓库 overlay> <本机设置>
+  local src="$1" dst="$2" backup tmp
+  if [ ! -f "$src" ]; then warn "settings.json: 源不存在 $src"; return; fi
+  require_jq || return 0
+  if ! json_object "$src"; then
+    warn "settings.json: $src 不是有效的 JSON 对象，已跳过"
+    return
   fi
-  run mkdir -p -- "$(dirname "$dst")"
-  run cp -- "$src" "$dst"
-  say "+ $name"
+
+  if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
+    run mkdir -p -- "$(dirname "$dst")"
+    run cp -- "$src" "$dst"
+    say "+ settings.json"
+    return
+  fi
+  if ! json_object "$dst"; then
+    warn "settings.json: $dst 不是有效的 JSON 对象，已跳过"
+    return
+  fi
+  if settings_overlay_applied "$dst" "$src"; then
+    say "= settings.json 的仓库设置已生效"
+    return
+  fi
+
+  if [ "$FORCE" = 1 ]; then
+    backup="$dst.bak.$STAMP"
+    if ! run cp -p -- "$dst" "$backup"; then
+      warn "settings.json: 无法备份到 $backup，已跳过合并"
+      return
+    fi
+    say "~ settings.json: 原文件已备份为 $(basename "$backup")"
+  fi
+  if [ "$DRY" = 1 ]; then
+    say "~ settings.json 将合并仓库设置"
+    return
+  fi
+
+  if ! tmp="$(mktemp "${dst}.tmp.XXXXXX")"; then
+    warn "settings.json: 无法创建临时文件，已跳过合并"
+    return
+  fi
+  if ! cp -p -- "$dst" "$tmp"; then
+    rm -f -- "$tmp"
+    warn "settings.json: 无法准备临时文件，已跳过合并"
+    return
+  fi
+  if ! jq -s '.[0] * .[1]' "$dst" "$src" > "$tmp"; then
+    rm -f -- "$tmp"
+    warn "settings.json: 合并失败，原文件未改动"
+    return
+  fi
+  if ! mv -- "$tmp" "$dst"; then
+    rm -f -- "$tmp"
+    warn "settings.json: 无法替换原文件"
+    return
+  fi
+  say "~ settings.json 已合并仓库设置"
+}
+
+status_settings() { # status_settings <仓库 overlay> <本机设置>
+  local src="$1" dst="$2"
+  if [ ! -f "$src" ]; then warn "settings.json: 源不存在 $src"; return; fi
+  require_jq || return 0
+  if ! json_object "$src"; then
+    warn "settings.json: $src 不是有效的 JSON 对象"
+    return
+  fi
+  if [ ! -f "$dst" ]; then
+    warn "settings.json 未安装"
+    return
+  fi
+  if ! json_object "$dst"; then
+    warn "settings.json: $dst 不是有效的 JSON 对象"
+    return
+  fi
+  if settings_overlay_applied "$dst" "$src"; then
+    say "= settings.json 的仓库设置已生效"
+  else
+    warn "settings.json 的仓库设置未完全生效 —— 运行 ./install.sh 合并"
+  fi
 }
 
 link_skills() { # link_skills <目标 skills 目录>
@@ -212,7 +290,7 @@ uninstall_plugin_files() {
 install_claude() {
   echo "→ $CLAUDE_DIR"
   link "$REPO/claude/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
-  copyfile "$REPO/claude/settings.json" "$CLAUDE_DIR/settings.json" "settings.json"
+  install_settings "$REPO/claude/settings.json" "$CLAUDE_DIR/settings.json"
   link_skills "$CLAUDE_DIR/skills"
   link_dir_files "$REPO/claude/agents"   "$CLAUDE_DIR/agents"   "agent"
   link_dir_files "$REPO/claude/commands" "$CLAUDE_DIR/commands" "command"
@@ -242,7 +320,7 @@ uninstall_from() { # uninstall_from <配置目录>
     done
     [ "$DRY" = 1 ] || rmdir "$base/$n" 2>/dev/null || true
   done
-  [ -f "$base/settings.json" ] && say "= settings.json 是拷贝不是链接，保留未动"
+  [ -f "$base/settings.json" ] && say "= settings.json 是本机普通文件，保留未动"
   return 0
 }
 
@@ -261,11 +339,6 @@ status_of() { # status_of <配置目录> <指令文件名>
     done
     say "$n/: $ok 个来自仓库$([ $bad -gt 0 ] && echo "，$bad 个来自别处")"
   done
-  if [ -f "$base/settings.json" ] && [ -f "$REPO/claude/settings.json" ]; then
-    cmp -s "$REPO/claude/settings.json" "$base/settings.json" \
-      && say "= settings.json 与仓库一致" \
-      || warn "settings.json 与仓库不一致 —— 先检查: diff -u '$REPO/claude/settings.json' '$base/settings.json'"
-  fi
   return 0
 }
 
@@ -283,7 +356,7 @@ case "$MODE" in
     if want_codex;  then uninstall_from "$CODEX_DIR";  fi
     ;;
   status)
-    if want_claude; then status_of "$CLAUDE_DIR" CLAUDE.md; status_plugin_files; fi
+    if want_claude; then status_of "$CLAUDE_DIR" CLAUDE.md; status_settings "$REPO/claude/settings.json" "$CLAUDE_DIR/settings.json"; status_plugin_files; fi
     if want_codex;  then status_of "$CODEX_DIR" AGENTS.md; fi
     ;;
 esac

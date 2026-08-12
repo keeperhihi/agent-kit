@@ -42,3 +42,4 @@ Claude Code 的状态栏插件。插件本体由 Claude Code 插件管理器安�
 - Todos
 - Session Name
 - Reasoning Effort（`display.showEffortLevel`）
+- 周用量始终显示（`display.sevenDayThreshold: 0`）；默认值 80 表示只有 7 天用量 ≥80% 才显示 Weekly 段

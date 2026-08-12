@@ -3,6 +3,7 @@
     "showAgents": true,
     "showTodos": true,
     "showSessionName": true,
-    "showEffortLevel": true
+    "showEffortLevel": true,
+    "sevenDayThreshold": 0
   }
 }
