@@ -6,5 +6,8 @@
   "effortLevel": "xhigh",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
-  "disableRemoteControl": true
+  "disableRemoteControl": true,
+  "env": {
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "272000"
+  }
 }
