@@ -1,16 +1,17 @@
 {
-  "permissions": {
-    "defaultMode": "bypassPermissions"
-  },
   "model": "opus[1m]",
   "effortLevel": "xhigh",
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
   "disableRemoteControl": true,
-  "env": {
-    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "272000"
-  }
   "skillOverrides": {
     "claude-api": "off"
+  },
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "deny": [
+      "Skill(claude-api)",
+      "Skill(claude-api *)"
+    ]
   }
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 把本仓库安装到 ~/.claude（默认）和/或 ~/.codex。
-# settings.json 作为 overlay 合并；其他受管文件使用符号链接。
+# settings.json 和 Codex config.toml 作为 overlay 合并；其他受管文件使用符号链接。
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +22,7 @@ usage() {
   --target claude|codex|both   安装目标（默认 claude）
   --no-vendor                  跳过 vendor/skills（第三方 skill）
   --dry-run                    只打印将要做什么
-  --force                      覆盖已有目标前备份；settings 合并前也创建备份
+  --force                      覆盖已有目标前备份；settings/config 合并前也创建备份
   --status                     只检查安装状态，不改动任何东西
   --uninstall                  移除本仓库装出去的符号链接（不动普通文件）
   -h, --help                   显示本帮助
@@ -56,14 +56,24 @@ run()  {
   fi
 }
 
-# 目标是不是本仓库装出去的链接
-owned_by_repo() { [ -L "$1" ] && case "$(readlink -f "$1" || true)" in "$REPO"/*) return 0 ;; esac; return 1; }
+# 目标是不是本仓库装出去的链接。macOS 的 /var 与 /private/var 可能有两种
+# realpath，源路径和目标路径都先规范化，避免 status 在临时目录下误报漂移。
+owned_by_repo() {
+  local repo_root
+  repo_root="$(readlink -f "$REPO" || true)"
+  [ -n "$repo_root" ] || return 1
+  [ -L "$1" ] && case "$(readlink -f "$1" || true)" in "$repo_root"/*) return 0 ;; esac
+  return 1
+}
 owned_plugin_file() {
-  local target rest plugin file
+  local target repo_root rest plugin file
   [ -L "$1" ] || return 1
-  target="$(readlink "$1" || true)"
-  case "$target" in "$REPO"/claude/plugins/*) ;; *) return 1 ;; esac
-  rest="${target#"$REPO"/claude/plugins/}"
+  target="$(readlink -f "$1" || true)"
+  repo_root="$(readlink -f "$REPO" || true)"
+  [ -n "$repo_root" ] || return 1
+  case "$target" in "$repo_root"/claude/plugins/*) ;; *) return 1 ;; esac
+  target="${target#"$repo_root"/claude/plugins/}"
+  rest="$target"
   plugin="${rest%%/*}"
   [ -n "$plugin" ] && [ "$plugin" != "$rest" ] || return 1
   rest="${rest#*/}"
@@ -198,6 +208,226 @@ status_settings() { # status_settings <仓库 overlay> <本机设置>
   fi
 }
 
+# 只把模板中的赋值覆盖到本机 config.toml；本机独有的键、表和注释保留。
+# 这样不需要额外安装 TOML 解析器，也不会把机器专属配置重新格式化一遍。
+toml_overlay_merge() { # toml_overlay_merge <仓库 overlay> <本机 config.toml>
+  local src="$1" dst="$2"
+  awk '
+    function trim(s) {
+      sub(/^[[:space:]]+/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      return s
+    }
+    function header(s, t) {
+      t=trim(s)
+      sub(/[[:space:]]+#.*$/, "", t)
+      if (t ~ /^\[\[/ && t ~ /\]\]$/) return t
+      if (t ~ /^\[/ && t ~ /\]$/) return t
+      return ""
+    }
+    function key_of(s, p, k) {
+      p=index(s, "=")
+      if (!p) return ""
+      k=trim(substr(s, 1, p-1))
+      return k
+    }
+    function fail(msg) {
+      print "TOML overlay error: " msg > "/dev/stderr"
+      failed=1
+    }
+    function remember_section(sec) {
+      if (!(sec in overlay_section_seen)) {
+        overlay_section_seen[sec]=1
+        overlay_sections[++overlay_section_count]=sec
+      }
+    }
+    function remember_assignment(sec, line, key, id, n) {
+      key=key_of(line)
+      if (key == "") {
+        fail("invalid assignment: " line)
+        return
+      }
+      id=sec SUBSEP key
+      if (id in overlay_line) {
+        fail("duplicate assignment in overlay: " id)
+        return
+      }
+      remember_section(sec)
+      overlay_line[id]=line
+      n=++overlay_key_count[sec]
+      overlay_key[sec SUBSEP n]=key
+    }
+    function emit_missing(sec, i, key, id) {
+      for (i=1; i<=overlay_key_count[sec]; i++) {
+        key=overlay_key[sec SUBSEP i]
+        id=sec SUBSEP key
+        if (!(id in applied)) {
+          print overlay_line[id]
+          applied[id]=1
+        }
+      }
+    }
+    function section_path(sec, path) {
+      path=sec
+      sub(/^\[\[/, "", path)
+      sub(/\]\]$/, "", path)
+      sub(/^\[/, "", path)
+      sub(/\]$/, "", path)
+      return path
+    }
+    function emit_missing_parents(child, i, sec, child_path, sec_path) {
+      child_path=section_path(child)
+      for (i=1; i<=overlay_section_count; i++) {
+        sec=overlay_sections[i]
+        if (sec == "" || (sec in target_section_seen)) continue
+        sec_path=section_path(sec)
+        if (index(child_path, sec_path ".") == 1) {
+          print ""
+          print sec
+          emit_missing(sec)
+          target_section_seen[sec]=1
+        }
+      }
+    }
+
+    # First pass: collect the repository overlay.
+    FNR == NR {
+      raw=$0
+      t=trim(raw)
+      if (t == "" || t ~ /^#/) next
+      h=header(raw)
+      if (h != "") {
+        overlay_section=h
+        remember_section(h)
+        next
+      }
+      if (index(raw, "=") > 0) {
+        remember_assignment(overlay_section, raw)
+        next
+      }
+      fail("unsupported overlay line: " raw)
+      next
+    }
+
+    # Second pass: replace managed assignments and preserve everything else.
+    {
+      raw=$0
+      h=header(raw)
+      if (h != "") {
+        emit_missing(target_section)
+        emit_missing_parents(h)
+        target_section=h
+        target_section_seen[h]=1
+        print raw
+        next
+      }
+      if (index(raw, "=") > 0) {
+        key=key_of(raw)
+        id=target_section SUBSEP key
+        if (id in overlay_line) {
+          print overlay_line[id]
+          applied[id]=1
+        } else {
+          print raw
+        }
+        next
+      }
+      print raw
+    }
+
+    END {
+      if (failed) exit 2
+      emit_missing(target_section)
+      target_section_seen[""]=1
+      for (i=1; i<=overlay_section_count; i++) {
+        sec=overlay_sections[i]
+        if (sec == "" || (sec in target_section_seen)) continue
+        print ""
+        print sec
+        emit_missing(sec)
+      }
+    }
+  ' "$src" "$dst"
+}
+
+codex_config_overlay_applied() { # codex_config_overlay_applied <仓库 overlay> <本机 config.toml>
+  local src="$1" dst="$2" tmp result
+  [ -f "$src" ] && [ -f "$dst" ] || return 1
+  if ! tmp="$(mktemp "${TMPDIR:-/tmp}/agent-kit-codex-check.XXXXXX")"; then return 1; fi
+  if ! toml_overlay_merge "$src" "$dst" > "$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  cmp -s "$tmp" "$dst"
+  result=$?
+  rm -f -- "$tmp"
+  return "$result"
+}
+
+install_codex_config() { # install_codex_config <仓库 overlay> <本机 config.toml>
+  local src="$1" dst="$2" backup tmp
+  if [ ! -f "$src" ]; then warn "config.toml: 源不存在 $src"; return; fi
+
+  if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
+    run mkdir -p -- "$(dirname "$dst")"
+    run cp -- "$src" "$dst"
+    say "+ config.toml"
+    return
+  fi
+  if codex_config_overlay_applied "$src" "$dst"; then
+    say "= config.toml 的仓库设置已生效"
+    return
+  fi
+
+  if [ "$FORCE" = 1 ]; then
+    backup="$dst.bak.$STAMP"
+    if ! run cp -p -- "$dst" "$backup"; then
+      warn "config.toml: 无法备份到 $backup，已跳过合并"
+      return
+    fi
+    say "~ config.toml: 原文件已备份为 $(basename "$backup")"
+  fi
+  if [ "$DRY" = 1 ]; then
+    say "~ config.toml 将合并仓库设置"
+    return
+  fi
+
+  if ! tmp="$(mktemp "${dst}.tmp.XXXXXX")"; then
+    warn "config.toml: 无法创建临时文件，已跳过合并"
+    return
+  fi
+  if ! cp -p -- "$dst" "$tmp"; then
+    rm -f -- "$tmp"
+    warn "config.toml: 无法准备临时文件，已跳过合并"
+    return
+  fi
+  if ! toml_overlay_merge "$src" "$dst" > "$tmp"; then
+    rm -f -- "$tmp"
+    warn "config.toml: 合并失败，原文件未改动"
+    return
+  fi
+  if ! mv -- "$tmp" "$dst"; then
+    rm -f -- "$tmp"
+    warn "config.toml: 无法替换原文件"
+    return
+  fi
+  say "~ config.toml 已合并仓库设置"
+}
+
+status_codex_config() { # status_codex_config <仓库 overlay> <本机 config.toml>
+  local src="$1" dst="$2"
+  if [ ! -f "$src" ]; then warn "config.toml: 源不存在 $src"; return; fi
+  if [ ! -f "$dst" ]; then
+    warn "config.toml 未安装"
+    return
+  fi
+  if codex_config_overlay_applied "$src" "$dst"; then
+    say "= config.toml 的仓库设置已生效"
+  else
+    warn "config.toml 的仓库设置未完全生效 —— 运行 ./install.sh --target codex 合并"
+  fi
+}
+
 link_skills() { # link_skills <目标 skills 目录>
   local into="$1" d n
   for d in "$REPO"/skills/*/; do n="$(basename "$d")"; link "${d%/}" "$into/$n" "skill $n"; done
@@ -301,9 +531,7 @@ install_codex() {
   echo "→ $CODEX_DIR"
   link "$REPO/codex/AGENTS.md" "$CODEX_DIR/AGENTS.md" "AGENTS.md"
   link_skills "$CODEX_DIR/skills"
-  [ -f "$CODEX_DIR/config.toml" ] \
-    && say "= config.toml 已存在，未改动（模板见 codex/config.toml.tmpl）" \
-    || warn "config.toml 不存在 —— 手动: cp codex/config.toml.tmpl $CODEX_DIR/config.toml 后填空"
+  install_codex_config "$REPO/codex/config.toml.tmpl" "$CODEX_DIR/config.toml"
 }
 
 uninstall_from() { # uninstall_from <配置目录>
@@ -321,6 +549,7 @@ uninstall_from() { # uninstall_from <配置目录>
     [ "$DRY" = 1 ] || rmdir "$base/$n" 2>/dev/null || true
   done
   [ -f "$base/settings.json" ] && say "= settings.json 是本机普通文件，保留未动"
+  [ -f "$base/config.toml" ] && say "= config.toml 是本机普通文件，保留未动"
   return 0
 }
 
@@ -357,7 +586,7 @@ case "$MODE" in
     ;;
   status)
     if want_claude; then status_of "$CLAUDE_DIR" CLAUDE.md; status_settings "$REPO/claude/settings.json" "$CLAUDE_DIR/settings.json"; status_plugin_files; fi
-    if want_codex;  then status_of "$CODEX_DIR" AGENTS.md; fi
+    if want_codex;  then status_of "$CODEX_DIR" AGENTS.md; status_codex_config "$REPO/codex/config.toml.tmpl" "$CODEX_DIR/config.toml"; fi
     ;;
 esac
 

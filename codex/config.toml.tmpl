@@ -1,14 +1,18 @@
-# Codex config 模板 —— 新机器上拷到 ~/.codex/config.toml 后填空。
+# Codex 可移植配置 overlay —— install.sh 会合并到 ~/.codex/config.toml。
 #
 # 这里只保留可移植的偏好。以下东西**故意不入库**，因为它们要么是机器专属，
-# 要么是凭证：
+# 要么是凭证或运行时状态：
 #   - auth.json（凭证，永远不要提交）
 #   - [projects."/abs/path"] trust_level（一堆本机绝对路径，新机器上 Codex 会自己长出来）
 #   - model_catalog_json 的绝对路径
-#   - 私有网关的 base_url / IP
+#   - notify、带本机命令/路径的 MCP、插件/Marketplace 和 shell 环境状态
+#   - desktop.enabled-reasoning-efforts 这类由当前 App 版本生成的能力列表
+#   - 非默认 localhost 网关的 base_url / IP
 
 model_provider = "cm"
 model = "gpt-5.6-sol"
+model_context_window = 1000000
+model_auto_compact_token_limit = 500000
 review_model = "gpt-5.6-sol"
 
 personality = "none"
@@ -18,7 +22,7 @@ plan_mode_reasoning_effort = "max"
 
 model_reasoning_summary = "detailed"
 model_supports_reasoning_summaries = true
-model_verbosity = "high"
+model_verbosity = "medium"
 
 web_search = "live"
 service_tier = "fast"
@@ -27,12 +31,19 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 allow_login_shell = true
 
+cli_auth_credentials_store = "file"
+chatgpt_base_url = "https://chatgpt.com/backend-api/"
+mcp_oauth_credentials_store = "auto"
+check_for_update_on_startup = true
+approvals_reviewer = "user"
+
 # 填成本机 codex-manager 的 gateway-models.json 路径
 # model_catalog_json = "/PATH/TO/codex-profiles/<hash>/gateway-models.json"
 
 [model_providers.cm]
-name = "CodexManager"
-base_url = "http://127.0.0.1:48761/v1"
+name = "OpenAI"
+# CodexManager 的默认本机 gateway；不要把真实私有网关地址写进模板。
+base_url = "http://localhost:48760/v1"
 wire_api = "responses"
 supports_websockets = false
 
@@ -45,3 +56,27 @@ supports_websockets = false
 
 [notice]
 hide_rate_limit_model_nudge = true
+
+[tui]
+status_line = ["model-with-reasoning", "current-dir", "permissions", "context-used", "five-hour-limit", "weekly-limit", "context-window-size", "fast-mode", "task-progress"]
+status_line_use_colors = true
+
+[features]
+multi_agent = true
+
+[mcp_servers.firecrawl]
+url = "https://mcp.firecrawl.dev/v2/mcp-oauth"
+
+[mcp_servers.openaiDeveloperDocs]
+url = "https://developers.openai.com/mcp"
+
+[desktop]
+conversationDetailMode = "STEPS_PROSE"
+sansFontSize = 14
+codeFontSize = 13
+ambient-suggestions-enabled = false
+followUpQueueMode = "steer"
+show-ultra-in-model-picker-slider = false
+show-context-window-usage = true
+preventSleepWhileRunning = true
+appearanceTheme = "light"
