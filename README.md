@@ -47,5 +47,6 @@ install.sh
 - 插件本体、Marketplace、缓存和注册表不纳入仓库。
 - Codex 的机器专属配置（信任目录、模型目录绝对路径、带本机路径的 MCP、插件/Marketplace 状态等）不会从本机回写模板；模板只保留跨机器的偏好。
 - 凭证、会话记录、数据库、`settings.local.json` 和机器专属路径不入库。
+- 全局指令禁止把 hash、checksum、fingerprint、重复审计和假想边界检查当作默认防御手段；只有功能本身、用户明确要求或项目明确要求时才加入。安全、迁移、验证与审阅要求优先。
 
 `claude/settings.json` 和 `codex/config.toml.tmpl` 只放需要跨机器统一的字段，不直接将完整的本机配置复制回仓库。使用 `./install.sh --status` 检查两个 overlay 是否已生效。

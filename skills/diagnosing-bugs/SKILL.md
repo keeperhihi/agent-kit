@@ -7,6 +7,10 @@ description: Diagnosis loop for hard bugs and performance regressions. Use when 
 
 A discipline for hard bugs. Skip phases only when explicitly justified.
 
+This is an explicit debugging mode. Checks that directly reproduce the reported
+failure are part of the work, not optional defensive ceremony; the general
+scope limits must not weaken them.
+
 When exploring the codebase, read `CONTEXT.md` (if it exists) to get a clear mental model of the relevant modules, and check ADRs in the area you're touching.
 
 ## Phase 1 — Build a feedback loop

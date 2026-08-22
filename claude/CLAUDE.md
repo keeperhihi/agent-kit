@@ -2,7 +2,9 @@
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+**Tradeoff:** Prefer the shortest path that meets the requirement. Do not trade
+away security, migration, verification, or review work that is explicitly
+required.
 
 ## 1. Think Before Coding
 
@@ -59,6 +61,40 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## 5. Scope Limits and Verification
+
+**Do the requested work. Do not build a defensive process around it.**
+
+- Report defects reachable through documented inputs, public interfaces, or real
+  data, even when they sound rare. These limits constrain the proposed fix, not
+  defect discovery.
+- Do not add hashes, checksums, fingerprints, feature flags, compatibility
+  layers, migration scaffolding, wrappers, extra auditors, scoring tables, or
+  repeated verification as defensive measures. If the requested behavior or an
+  explicit project, security, migration, or review requirement needs one,
+  implement that requirement; otherwise leave it out.
+- Do not add checks for hypothetical or unreachable states. Do not repeat a
+  check that already settled the same question.
+- Before running an additional check, identify the concrete failure it can
+  expose and the action that would change if it fails. If neither is clear, do
+  not run it.
+- Use the smallest check that answers the question. Expand it only for a shared
+  interface, unknown consumers, an explicit project convention, or an explicit
+  user requirement.
+- Treat the requested behavior and the checks that directly support it as the
+  stopping point. Do not continue hardening after that point. Say plainly when
+  the result is correct.
+
+Examples of the boundary:
+
+- A hash used as the requested mechanism to avoid a materially more expensive
+  operation is functional work, not extra defense.
+- A checksum file nobody reads, a hash added only to look rigorous, or an audit
+  loop that settles no new question is prohibited redundancy.
+
+Explicit security, migration, verification, and review requirements take
+precedence over these scope limits.
 
 ---
 
