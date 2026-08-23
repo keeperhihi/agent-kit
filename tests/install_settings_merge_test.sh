@@ -91,6 +91,7 @@ cp "$TEST_CONFIG_DIR/settings.json" "$TEST_ROOT/settings.before-dry-run"
 output="$(CLAUDE_CONFIG_DIR="$TEST_CONFIG_DIR" /bin/bash "$TEST_REPO/install.sh" \
   --target claude --no-vendor --dry-run 2>&1)"
 cmp -s "$TEST_ROOT/settings.before-dry-run" "$TEST_CONFIG_DIR/settings.json"
+[ ! -e "$TEST_CONFIG_DIR/.agent-kit-backups" ]
 case "$output" in
   *"settings.json 将合并仓库设置"*) ;;
   *)
@@ -102,13 +103,17 @@ esac
 
 CLAUDE_CONFIG_DIR="$TEST_CONFIG_DIR" /bin/bash "$TEST_REPO/install.sh" \
   --target claude --no-vendor --force >/dev/null
-backup_count="$(find "$TEST_CONFIG_DIR" -maxdepth 1 -type f -name 'settings.json.bak.*' | wc -l | tr -d ' ')"
+[ -d "$TEST_CONFIG_DIR/.agent-kit-backups" ]
+backup_count="$(find "$TEST_CONFIG_DIR/.agent-kit-backups" -type f -path '*/settings.json' | wc -l | tr -d ' ')"
 if [ "$backup_count" -ne 1 ]; then
   printf 'FAIL: --force created %s settings backups; expected 1\n' "$backup_count" >&2
   exit 1
 fi
+legacy_backup_count="$(find "$TEST_CONFIG_DIR" -maxdepth 1 -type f -name 'settings.json.bak.*' | wc -l | tr -d ' ')"
+[ "$legacy_backup_count" -eq 0 ]
+backup_file="$(find "$TEST_CONFIG_DIR/.agent-kit-backups" -type f -path '*/settings.json' | head -1)"
 jq -e '.theme == "dark" and .statusLine.command == "local-status"' \
-  "$TEST_CONFIG_DIR"/settings.json.bak.* >/dev/null
+  "$backup_file" >/dev/null
 jq -e '.theme == "light" and .statusLine.command == "local-status"' \
   "$TEST_CONFIG_DIR/settings.json" >/dev/null
 

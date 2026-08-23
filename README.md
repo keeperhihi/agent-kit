@@ -41,7 +41,7 @@ install.sh
 - 从 overlay 删除字段只表示停止管理，不会从本机 `settings.json` 删除已有字段。
 - `codex/config.toml.tmpl` 也作为可移植配置 overlay：安装时覆盖模板中的键，并追加本机缺少的键/表；本机独有键、表和注释保留。
 - Codex 的数组值与 Claude 的数组一样整体替换，不进行拼接；从模板删除字段只表示停止管理，不会从本机 `config.toml` 删除已有字段。
-- 其他受管文件使用符号链接。已有目标默认不覆盖；使用 `--force` 时先备份再覆盖。
+- 其他受管文件使用符号链接。已有目标默认不覆盖；使用 `--force` 时先备份再覆盖。Claude 备份写入 `~/.claude/.agent-kit-backups/<run-id>/`，Codex 备份写入 `~/.codex/.agent-kit-backups/<run-id>/`，并保留各自配置目录下的相对路径；不在用户 home 根目录创建备份目录。
 - `--force` 不是合并 settings/config 的前提，只会在合并前额外创建备份。
 - `claude/plugins/<plugin-name>/files/` 映射到该插件的用户配置目录。
 - 插件本体、Marketplace、缓存和注册表不纳入仓库。

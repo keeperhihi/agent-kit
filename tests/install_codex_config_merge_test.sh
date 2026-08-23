@@ -107,6 +107,7 @@ mv "$TEST_ROOT/template.next" "$TEST_REPO/codex/config.toml.tmpl"
 cp "$CODEX_DIR/config.toml" "$TEST_ROOT/config.before-dry-run"
 output="$(HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex --no-vendor --dry-run 2>&1)"
 cmp -s "$TEST_ROOT/config.before-dry-run" "$CODEX_DIR/config.toml"
+[ ! -e "$CODEX_DIR/.agent-kit-backups" ]
 case "$output" in
   *"config.toml 将合并仓库设置"*) ;;
   *)
@@ -117,9 +118,12 @@ case "$output" in
 esac
 
 HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex --no-vendor --force >/dev/null
-backup_count="$(find "$CODEX_DIR" -maxdepth 1 -type f -name 'config.toml.bak.*' | wc -l | tr -d ' ')"
+backup_count="$(find "$CODEX_DIR/.agent-kit-backups" -type f -path '*/config.toml' | wc -l | tr -d ' ')"
 [ "$backup_count" -eq 1 ]
-grep -F 'model = "repo"' "$CODEX_DIR"/config.toml.bak.* >/dev/null
+legacy_backup_count="$(find "$CODEX_DIR" -maxdepth 1 -type f -name 'config.toml.bak.*' | wc -l | tr -d ' ')"
+[ "$legacy_backup_count" -eq 0 ]
+backup_file="$(find "$CODEX_DIR/.agent-kit-backups" -type f -path '*/config.toml' | head -1)"
+grep -F 'model = "repo"' "$backup_file" >/dev/null
 grep -F 'model = "repo-v2"' "$CODEX_DIR/config.toml" >/dev/null
 grep -F 'local_only = true' "$CODEX_DIR/config.toml" >/dev/null
 

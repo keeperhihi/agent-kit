@@ -6,6 +6,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CODEX_DIR="$HOME/.codex"
+CLAUDE_BACKUP_ROOT="$CLAUDE_DIR/.agent-kit-backups"
+CODEX_BACKUP_ROOT="$CODEX_DIR/.agent-kit-backups"
 
 TARGET=claude
 MODE=install
@@ -13,6 +15,7 @@ DRY=0
 FORCE=0
 VENDOR=1
 STAMP="$(date +%Y%m%d%H%M%S)"
+BACKUP_SESSION="$STAMP-$$"
 rc=0
 
 usage() {
@@ -22,7 +25,7 @@ usage() {
   --target claude|codex|both   安装目标（默认 claude）
   --no-vendor                  跳过 vendor/skills（第三方 skill）
   --dry-run                    只打印将要做什么
-  --force                      覆盖已有目标前备份；settings/config 合并前也创建备份
+  --force                      覆盖已有目标前备份；备份放在对应配置目录的 .agent-kit-backups/<run-id>/
   --status                     只检查安装状态，不改动任何东西
   --uninstall                  移除本仓库装出去的符号链接（不动普通文件）
   -h, --help                   显示本帮助
@@ -54,6 +57,57 @@ run()  {
   else
     "$@"
   fi
+}
+
+backup_path() { # backup_path <目标路径>
+  local dst="$1" root rel
+  case "$dst" in
+    "$CLAUDE_DIR"/*)
+      root="$CLAUDE_BACKUP_ROOT"
+      rel="${dst#"$CLAUDE_DIR"/}"
+      ;;
+    "$CODEX_DIR"/*)
+      root="$CODEX_BACKUP_ROOT"
+      rel="${dst#"$CODEX_DIR"/}"
+      ;;
+    *)
+      root="$CLAUDE_BACKUP_ROOT"
+      rel="other/$(basename "$dst")"
+      ;;
+  esac
+  printf '%s/%s/%s\n' "$root" "$BACKUP_SESSION" "$rel"
+}
+
+backup_target() { # backup_target <move|copy> <源路径> <显示名>
+  local mode="$1" src="$2" name="$3" backup
+  backup="$(backup_path "$src")"
+  if [ "$DRY" = 0 ] && { [ -e "$backup" ] || [ -L "$backup" ]; }; then
+    warn "$name: 备份目标已存在，拒绝覆盖: $backup"
+    return 1
+  fi
+  if ! run mkdir -p -- "$(dirname "$backup")"; then
+    warn "$name: 无法创建备份目录: $(dirname "$backup")"
+    return 1
+  fi
+  case "$mode" in
+    move)
+      if ! run mv -- "$src" "$backup"; then
+        warn "$name: 无法备份到 $backup"
+        return 1
+      fi
+      ;;
+    copy)
+      if ! run cp -p -- "$src" "$backup"; then
+        warn "$name: 无法备份到 $backup"
+        return 1
+      fi
+      ;;
+    *)
+      warn "$name: 未知备份方式: $mode"
+      return 1
+      ;;
+  esac
+  say "~ $name: 原文件已备份到 $backup"
 }
 
 # 目标是不是本仓库装出去的链接。macOS 的 /var 与 /private/var 可能有两种
@@ -93,7 +147,7 @@ link() { # link <仓库内源> <目标路径> <显示名>
   fi
   if [ -e "$dst" ] || [ -L "$dst" ]; then
     if [ "$FORCE" = 1 ]; then
-      run mv -- "$dst" "$dst.bak.$STAMP"; say "~ $name: 原文件已备份为 $(basename "$dst").bak.$STAMP"
+      backup_target move "$dst" "$name" || return
     else
       warn "$name: $dst 已存在且不是本仓库的链接 —— 跳过（--force 可备份后覆盖）"; return
     fi
@@ -127,7 +181,7 @@ settings_overlay_applied() { # settings_overlay_applied <本机设置> <仓库 o
 }
 
 install_settings() { # install_settings <仓库 overlay> <本机设置>
-  local src="$1" dst="$2" backup tmp
+  local src="$1" dst="$2" tmp
   if [ ! -f "$src" ]; then warn "settings.json: 源不存在 $src"; return; fi
   require_jq || return 0
   if ! json_object "$src"; then
@@ -151,12 +205,7 @@ install_settings() { # install_settings <仓库 overlay> <本机设置>
   fi
 
   if [ "$FORCE" = 1 ]; then
-    backup="$dst.bak.$STAMP"
-    if ! run cp -p -- "$dst" "$backup"; then
-      warn "settings.json: 无法备份到 $backup，已跳过合并"
-      return
-    fi
-    say "~ settings.json: 原文件已备份为 $(basename "$backup")"
+    backup_target copy "$dst" "settings.json" || return
   fi
   if [ "$DRY" = 1 ]; then
     say "~ settings.json 将合并仓库设置"
@@ -365,7 +414,7 @@ codex_config_overlay_applied() { # codex_config_overlay_applied <仓库 overlay>
 }
 
 install_codex_config() { # install_codex_config <仓库 overlay> <本机 config.toml>
-  local src="$1" dst="$2" backup tmp
+  local src="$1" dst="$2" tmp
   if [ ! -f "$src" ]; then warn "config.toml: 源不存在 $src"; return; fi
 
   if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
@@ -380,12 +429,7 @@ install_codex_config() { # install_codex_config <仓库 overlay> <本机 config.
   fi
 
   if [ "$FORCE" = 1 ]; then
-    backup="$dst.bak.$STAMP"
-    if ! run cp -p -- "$dst" "$backup"; then
-      warn "config.toml: 无法备份到 $backup，已跳过合并"
-      return
-    fi
-    say "~ config.toml: 原文件已备份为 $(basename "$backup")"
+    backup_target copy "$dst" "config.toml" || return
   fi
   if [ "$DRY" = 1 ]; then
     say "~ config.toml 将合并仓库设置"
