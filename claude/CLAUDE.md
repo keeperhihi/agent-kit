@@ -62,7 +62,28 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
-## 5. Scope Limits and Verification
+## 5. Standalone Deliverables
+
+**Write for the artifact's reader, not for the conversation that produced it.**
+
+When producing a plan, prompt, specification, documentation, or handoff for
+another agent:
+- Assume the reader has not seen the conversation. Include only the final
+  objective, inputs, outputs, constraints, decisions, and acceptance criteria
+  needed to act.
+- Re-derive the artifact from the final request. Do not carry forward guesses,
+  superseded proposals, negotiation history, or details that were never part of
+  the agreed contract.
+- When requirements change, rewrite the affected artifact from the current
+  contract; do not patch an earlier draft by appending the correction or its
+  negation.
+- Express the desired behavior directly. Do not repeat a rejected alternative,
+  removed tool, or forbidden term merely to say that it is excluded; mention a
+  prohibition only when the downstream contract genuinely needs that boundary.
+- Before delivering, remove conversation-only language and any accidental
+  references to discarded alternatives.
+
+## 6. Scope Limits and Verification
 
 **Do the requested work. Do not build a defensive process around it.**
 
