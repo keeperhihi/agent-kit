@@ -12,7 +12,7 @@ trap cleanup EXIT
 
 set +e
 output="$(CLAUDE_CONFIG_DIR="$TEST_CONFIG_DIR" /bin/bash "$REPO/install.sh" \
-  --target claude --no-vendor --dry-run 2>&1)"
+  --target claude --dry-run 2>&1)"
 status=$?
 set -e
 

@@ -13,7 +13,7 @@ TARGET=claude
 MODE=install
 DRY=0
 FORCE=0
-VENDOR=1
+VENDOR=0
 STAMP="$(date +%Y%m%d%H%M%S)"
 BACKUP_SESSION="$STAMP-$$"
 rc=0
@@ -23,7 +23,7 @@ usage() {
 用法: ./install.sh [选项]
 
   --target claude|codex|both   安装目标（默认 claude）
-  --no-vendor                  跳过 vendor/skills（第三方 skill）
+  --with-vendor                同时安装 vendor/skills 中的第三方 skill（默认跳过）
   --dry-run                    只打印将要做什么
   --force                      覆盖已有目标前备份；备份放在对应配置目录的 .agent-kit-backups/<run-id>/
   --status                     只检查安装状态，不改动任何东西
@@ -35,7 +35,7 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --target) TARGET="${2:?--target 需要参数}"; shift 2 ;;
-    --no-vendor) VENDOR=0; shift ;;
+    --with-vendor) VENDOR=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --force) FORCE=1; shift ;;
     --status) MODE=status; shift ;;

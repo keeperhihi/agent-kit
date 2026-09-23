@@ -52,7 +52,7 @@ provider_only = "keep"
 value = 7
 TOML
 
-output="$(HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex --no-vendor 2>&1)"
+output="$(HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex 2>&1)"
 case "$output" in
   *"config.toml 已合并仓库设置"*) ;;
   *)
@@ -80,7 +80,7 @@ child_line="$(grep -n '^\[tui\.model_availability_nux\]$' "$CODEX_DIR/config.tom
 [ -n "$parent_line" ] && [ -n "$child_line" ] && [ "$parent_line" -lt "$child_line" ]
 
 cp "$CODEX_DIR/config.toml" "$TEST_ROOT/config.after-first"
-output="$(HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex --no-vendor 2>&1)"
+output="$(HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex 2>&1)"
 cmp -s "$TEST_ROOT/config.after-first" "$CODEX_DIR/config.toml"
 case "$output" in
   *"config.toml 的仓库设置已生效"*) ;;
@@ -105,7 +105,7 @@ esac
 sed 's/model = "repo"/model = "repo-v2"/' "$TEST_REPO/codex/config.toml.tmpl" > "$TEST_ROOT/template.next"
 mv "$TEST_ROOT/template.next" "$TEST_REPO/codex/config.toml.tmpl"
 cp "$CODEX_DIR/config.toml" "$TEST_ROOT/config.before-dry-run"
-output="$(HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex --no-vendor --dry-run 2>&1)"
+output="$(HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex --dry-run 2>&1)"
 cmp -s "$TEST_ROOT/config.before-dry-run" "$CODEX_DIR/config.toml"
 [ ! -e "$CODEX_DIR/.agent-kit-backups" ]
 case "$output" in
@@ -117,7 +117,7 @@ case "$output" in
     ;;
 esac
 
-HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex --no-vendor --force >/dev/null
+HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex --force >/dev/null
 backup_count="$(find "$CODEX_DIR/.agent-kit-backups" -type f -path '*/config.toml' | wc -l | tr -d ' ')"
 [ "$backup_count" -eq 1 ]
 legacy_backup_count="$(find "$CODEX_DIR" -maxdepth 1 -type f -name 'config.toml.bak.*' | wc -l | tr -d ' ')"
@@ -131,7 +131,7 @@ grep -F 'local_only = true' "$CODEX_DIR/config.toml" >/dev/null
 printf '%s\n' 'not valid TOML' > "$TEST_REPO/codex/config.toml.tmpl"
 cp "$CODEX_DIR/config.toml" "$TEST_ROOT/config.before-invalid"
 set +e
-output="$(HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex --no-vendor 2>&1)"
+output="$(HOME="$TEST_HOME" /bin/bash "$TEST_REPO/install.sh" --target codex 2>&1)"
 rc=$?
 set -e
 [ "$rc" -eq 1 ]

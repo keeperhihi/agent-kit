@@ -29,7 +29,7 @@ model = "local"
 TOML
 
 output="$(HOME="$TEST_HOME" \
-  /bin/bash "$TEST_REPO/install.sh" --target codex --no-vendor --force 2>&1)"
+  /bin/bash "$TEST_REPO/install.sh" --target codex --force 2>&1)"
 
 [ -L "$CODEX_DIR/skills/example" ]
 [ "$(readlink "$CODEX_DIR/skills/example")" = "$TEST_REPO/skills/example" ]

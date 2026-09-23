@@ -47,7 +47,7 @@ cat > "$TEST_CONFIG_DIR/settings.json" <<'JSON'
 JSON
 
 CLAUDE_CONFIG_DIR="$TEST_CONFIG_DIR" /bin/bash "$TEST_REPO/install.sh" \
-  --target claude --no-vendor >/dev/null
+  --target claude >/dev/null
 
 jq -e '
   .permissions.defaultMode == "bypassPermissions" and
@@ -62,7 +62,7 @@ jq -e '
 
 cp "$TEST_CONFIG_DIR/settings.json" "$TEST_ROOT/settings.before"
 output="$(CLAUDE_CONFIG_DIR="$TEST_CONFIG_DIR" /bin/bash "$TEST_REPO/install.sh" \
-  --target claude --no-vendor 2>&1)"
+  --target claude 2>&1)"
 cmp -s "$TEST_ROOT/settings.before" "$TEST_CONFIG_DIR/settings.json"
 case "$output" in
   *"settings.json 的仓库设置已生效"*) ;;
@@ -89,7 +89,7 @@ jq '.theme = "light"' "$TEST_REPO/claude/settings.json" > "$tmp"
 mv "$tmp" "$TEST_REPO/claude/settings.json"
 cp "$TEST_CONFIG_DIR/settings.json" "$TEST_ROOT/settings.before-dry-run"
 output="$(CLAUDE_CONFIG_DIR="$TEST_CONFIG_DIR" /bin/bash "$TEST_REPO/install.sh" \
-  --target claude --no-vendor --dry-run 2>&1)"
+  --target claude --dry-run 2>&1)"
 cmp -s "$TEST_ROOT/settings.before-dry-run" "$TEST_CONFIG_DIR/settings.json"
 [ ! -e "$TEST_CONFIG_DIR/.agent-kit-backups" ]
 case "$output" in
@@ -102,7 +102,7 @@ case "$output" in
 esac
 
 CLAUDE_CONFIG_DIR="$TEST_CONFIG_DIR" /bin/bash "$TEST_REPO/install.sh" \
-  --target claude --no-vendor --force >/dev/null
+  --target claude --force >/dev/null
 [ -d "$TEST_CONFIG_DIR/.agent-kit-backups" ]
 backup_count="$(find "$TEST_CONFIG_DIR/.agent-kit-backups" -type f -path '*/settings.json' | wc -l | tr -d ' ')"
 if [ "$backup_count" -ne 1 ]; then
@@ -121,7 +121,7 @@ printf '%s\n' '{invalid json' > "$TEST_CONFIG_DIR/settings.json"
 cp "$TEST_CONFIG_DIR/settings.json" "$TEST_ROOT/settings.invalid"
 set +e
 output="$(CLAUDE_CONFIG_DIR="$TEST_CONFIG_DIR" /bin/bash "$TEST_REPO/install.sh" \
-  --target claude --no-vendor 2>&1)"
+  --target claude 2>&1)"
 status=$?
 set -e
 
