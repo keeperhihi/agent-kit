@@ -28,7 +28,10 @@ reject() { case "$output" in *"$1"*) fail "$2" "$output" ;; esac; }
 has_line() { grep -Fx -- "$2" "$1" >/dev/null || fail "$3" "$(cat "$1")"; }
 lacks_line() { if grep -Fx -- "$2" "$1" >/dev/null; then fail "$3" "$(cat "$1")"; fi; }
 replace_line() { # replace_line <文件> <旧行> <新行>；新行为空时删除该行
-  awk -v old="$2" -v new="$3" '$0 == old { if (new != "") print new; next } { print }' "$1" > "$1.tmp"
+  AK_OLD_LINE="$2" AK_NEW_LINE="$3" awk '
+    BEGIN { old = ENVIRON["AK_OLD_LINE"]; new = ENVIRON["AK_NEW_LINE"] }
+    $0 == old { if (new != "") print new; next } { print }
+  ' "$1" > "$1.tmp"
   mv "$1.tmp" "$1"
 }
 

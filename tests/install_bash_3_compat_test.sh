@@ -6,6 +6,7 @@ TEST_TMP_ROOT="${TMPDIR:-/tmp}"
 TEST_CONFIG_DIR="$(mktemp -d "${TEST_TMP_ROOT%/}/agent-kit-install-test.XXXXXX")"
 
 cleanup() {
+  rm -f "$TEST_CONFIG_DIR/settings.json"
   rmdir "$TEST_CONFIG_DIR"
 }
 trap cleanup EXIT
@@ -48,6 +49,29 @@ case "$output" in
   *)
     printf '%s\n' "$output" >&2
     printf 'FAIL: Claude plugin status files were not traversed\n' >&2
+    exit 1
+    ;;
+esac
+
+# 已有设置会触发同步提示；Bash 3.2 在 C.UTF-8 下需要明确变量与中文的边界。
+printf '%s\n' '{}' > "$TEST_CONFIG_DIR/settings.json"
+set +e
+output="$(LC_ALL=C.UTF-8 CLAUDE_CONFIG_DIR="$TEST_CONFIG_DIR" /bin/bash "$REPO/install.sh" \
+  --target claude --dry-run 2>&1)"
+status=$?
+set -e
+
+if [ "$status" -ne 0 ]; then
+  printf '%s\n' "$output" >&2
+  printf 'FAIL: settings sync report failed under /bin/bash with LC_ALL=C.UTF-8\n' >&2
+  exit 1
+fi
+
+case "$output" in
+  *"settings.json 将合并仓库设置"*) ;;
+  *)
+    printf '%s\n' "$output" >&2
+    printf 'FAIL: settings sync report was not printed\n' >&2
     exit 1
     ;;
 esac

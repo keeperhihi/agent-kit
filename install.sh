@@ -204,22 +204,22 @@ print_sync_report() { # print_sync_report <显示名> <模式>；从标准输入
     if [ "$lh" = 1 ]; then l="$lv"; else l="（未设置）"; fi
     case "$state:$mode" in
       repo:install)
-        if [ "$DRY" = 1 ]; then say "~ $name: $key 将改为仓库值 $rv（本机 $l）"
-        else say "+ $name: $key = $rv（原为 $l）"; fi ;;
+        if [ "$DRY" = 1 ]; then say "~ $name: $key 将改为仓库值 ${rv}（本机 ${l}）"
+        else say "+ $name: $key = ${rv}（原为 ${l}）"; fi ;;
       repo:pull) say "~ $name: $key 的仓库值 $rv 尚未应用到本机，不写回" ;;
-      repo:*) warn "$name: $key 的仓库值 $rv 尚未应用（本机 $l）—— 运行 ./install.sh" ;;
+      repo:*) warn "$name: $key 的仓库值 $rv 尚未应用（本机 ${l}）—— 运行 ./install.sh" ;;
       local:pull) say "← $name: $key = $l $(dry_word 将写回 已写回)仓库" ;;
-      local:*) say "~ $name: $key 本机改为 $l（仓库 $rv）—— --pull 可写回仓库" ;;
+      local:*) say "~ $name: $key 本机改为 ${l}（仓库 ${rv}）—— --pull 可写回仓库" ;;
       deleted:pull) say "← $name: $key $(dry_word 将从仓库移除 已从仓库移除)" ;;
-      deleted:*) say "~ $name: $key 本机已删除（仓库 $rv）—— --pull 可从仓库移除" ;;
+      deleted:*) say "~ $name: $key 本机已删除（仓库 ${rv}）—— --pull 可从仓库移除" ;;
       conflict:pull)
-        if [ "$lh" = 1 ]; then say "← $name: $key = $l $(dry_word 将写回 已写回)仓库（仓库原为 $rv）"
-        else say "← $name: $key $(dry_word 将从仓库移除 已从仓库移除)（仓库原为 $rv）"; fi ;;
+        if [ "$lh" = 1 ]; then say "← $name: $key = $l $(dry_word 将写回 已写回)仓库（仓库原为 ${rv}）"
+        else say "← $name: $key $(dry_word 将从仓库移除 已从仓库移除)（仓库原为 ${rv}）"; fi ;;
       conflict:install)
-        if [ "$FORCE" != 1 ]; then warn "$name: $key 两边都改了：仓库 $rv，本机 $l —— 已跳过；--pull 取本机，--force 取仓库"
-        elif [ "$DRY" = 1 ]; then say "~ $name: $key 将改为仓库值 $rv（覆盖本机 $l）"
-        else say "+ $name: $key = $rv（覆盖本机 $l）"; fi ;;
-      conflict:*) warn "$name: $key 两边都改了：仓库 $rv，本机 $l —— --pull 取本机，--force 取仓库" ;;
+        if [ "$FORCE" != 1 ]; then warn "$name: $key 两边都改了：仓库 ${rv}，本机 $l —— 已跳过；--pull 取本机，--force 取仓库"
+        elif [ "$DRY" = 1 ]; then say "~ $name: $key 将改为仓库值 ${rv}（覆盖本机 ${l}）"
+        else say "+ $name: $key = ${rv}（覆盖本机 ${l}）"; fi ;;
+      conflict:*) warn "$name: $key 两边都改了：仓库 ${rv}，本机 $l —— --pull 取本机，--force 取仓库" ;;
       manual:*)
         if [ "$rv" = multiline ]; then warn "$name: $key 本机的值跨多行，无法自动同步，请手动处理"
         else warn "$name: $key 所在的表由点号键定义，无法自动插入，请手动处理"; fi ;;
@@ -321,7 +321,7 @@ sync_settings() { # sync_settings <install|status|pull> <仓库 overlay> <本机
         say "+ settings.json"
         ;;
       status) warn "settings.json 未安装" ;;
-      pull) warn "settings.json: 本机没有 $dst，无可写回" ;;
+      pull) warn "settings.json: 本机没有 ${dst}，无可写回" ;;
     esac
     return 0
   fi
@@ -358,7 +358,7 @@ sync_settings() { # sync_settings <install|status|pull> <仓库 overlay> <本机
         if [ "$DRY" = 1 ]; then
           say "~ 将写回仓库 $src"
         elif write_json "$result" '.repo' "$src" "仓库 settings.json"; then
-          say "~ 已写回仓库 $src，用 git diff 查看"
+          say "~ 已写回仓库 ${src}，用 git diff 查看"
         else
           ok=0
         fi
@@ -676,7 +676,7 @@ sync_codex_config() { # sync_codex_config <install|status|pull> <仓库 overlay>
         say "+ config.toml"
         ;;
       status) warn "config.toml 未安装" ;;
-      pull) warn "config.toml: 本机没有 $dst，无可写回" ;;
+      pull) warn "config.toml: 本机没有 ${dst}，无可写回" ;;
     esac
     return 0
   fi
@@ -735,7 +735,7 @@ sync_codex_config() { # sync_codex_config <install|status|pull> <仓库 overlay>
           say "~ 将写回仓库 $src"
         elif mv -- "$out" "$src"; then
           out=""
-          say "~ 已写回仓库 $src，用 git diff 查看"
+          say "~ 已写回仓库 ${src}，用 git diff 查看"
         else
           ok=0
           warn "config.toml: 无法写回仓库模板"
