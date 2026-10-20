@@ -1,11 +1,6 @@
 # Codex 通用配置
 
 model_provider = "cm"
-model = "gpt-6-astra"
-model_context_window = 1000000
-
-model_reasoning_effort = "max"
-plan_mode_reasoning_effort = "max"
 
 model_reasoning_summary = "detailed"
 model_verbosity = "medium"
@@ -20,7 +15,7 @@ sandbox_mode = "danger-full-access"
 cli_auth_credentials_store = "file"
 
 [model_providers.cm]
-name = "OpenAI"
+name = "cm"
 # CodexManager 的默认本机 gateway。
 base_url = "http://localhost:48760/v1"
 # 使用 auth.json 中的 API key；认证开关属于 provider。

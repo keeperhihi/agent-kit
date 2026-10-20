@@ -11,6 +11,7 @@ cd <repo-directory>
 ./install.sh --target codex     # 安装到 Codex
 ./install.sh --target both      # 同时安装到 Codex
 ./install.sh --status           # 检查安装状态
+./install.sh --target both --pull  # 把在 CLI 里改过的受管设置写回仓库
 ./install.sh --target codex --with-vendor  # 同时安装 Firecrawl 等第三方 skill
 ```
 
@@ -63,7 +64,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -WithVendo
 
 模板通过 `cli_auth_credentials_store = "file"` 和 `[model_providers.cm]` 内的 `requires_openai_auth = true` 使用该文件，无需另外设置 API key 环境变量。认证机制见 [OpenAI 官方认证文档](https://learn.chatgpt.com/docs/auth#alternative-model-providers)。安装器不创建、读取或覆盖 `auth.json`。
 
-模板默认使用 `gpt-6-astra`，普通模式与 Plan 模式都设为 `max`，权限设为 `Full access`（`approval_policy = "never"`、`sandbox_mode = "danger-full-access"`）。`desktop.enabled-reasoning-efforts` 按 Windows App 的实测需要保留；它是桌面端设置，不能替代网关和模型对 `max` 的支持。已有会话的模型、推理强度和权限可能保留会话自己的选择，检查模板时应使用新会话。字段说明见 [官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)。
+模板不设置模型和推理强度，它们经常调整，留在本机；首次使用时在 Codex 中用 `/model` 选择网关提供的 `gpt-6-astra` 和推理强度。权限设为 `Full access`（`approval_policy = "never"`、`sandbox_mode = "danger-full-access"`）。`desktop.enabled-reasoning-efforts` 按 Windows App 的实测需要保留；它是桌面端设置，不能替代网关和模型对 `max` 的支持。已有会话的权限可能保留会话自己的选择，检查模板时应使用新会话。字段说明见 [官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)。
 
 模板保留网关连接、凭证存储约定和个人偏好，不重复声明已确认的客户端默认值。`/review` 跟随当前会话模型；`model_verbosity` 和 `service_tier` 作为可调整的回答长度与服务档位保留。`cli_auth_credentials_store = "file"` 虽然也是当前默认值，仍显式保留以表达 `auth.json` 的存储约定。桌面端字段的默认值未公开，按个人偏好保留。
 
@@ -94,19 +95,19 @@ install.ps1                     Windows Codex 安装器
 
 ## 约定
 
-- `claude/settings.json` 是可移植配置 overlay：安装时递归合并到 `~/.claude/settings.json`。
-- overlay 中的字段以仓库值为准；本机独有字段保留；数组整体替换，不进行拼接。
+- `claude/settings.json` 和 `codex/config.toml.tmpl` 是可移植配置 overlay，只放跨机器统一的键（受管键）。
+- 受管键在仓库、本机和上次同步记录（`<配置目录>/.agent-kit-state/`）之间三方比较：只有仓库改了，`install` 应用到本机；只有本机改了或删了（例如在 CLI 里修改），保留本机，`--pull` 写回仓库；两边都改了视为冲突，`install` 跳过并提示，`--pull` 取本机，`--force` 取仓库。没有同步记录时（首次同步），`install` 以仓库为准，`--pull` 以本机为准。本机独有字段保留；数组整体比较、整体替换，不进行拼接。
 - 从 overlay 删除字段只表示停止管理，不会从本机 `settings.json` 删除已有字段。
-- macOS/Linux 上，`codex/config.toml.tmpl` 作为可移植配置 overlay：安装时覆盖模板中的键，并追加本机缺少的键/表；本机独有键、表和注释保留。
+- macOS/Linux 上，`config.toml` 按同样规则同步：表头和键名按 TOML 语义比较（`["model_providers"."cm"]` 与 `[model_providers.cm]` 是同一张表），值按去掉注释后的单行文本比较；本机缺少的键补进对应的表，本机独有的键、表和注释保留。本机的值跨多行时只报告、不改动，需要手动处理。
 - Codex 的数组值与 Claude 的数组一样整体替换，不进行拼接；从模板删除字段只表示停止管理，不会从本机 `config.toml` 删除已有字段。
 - macOS/Linux 上，其他受管文件使用符号链接。已有目标默认不覆盖；使用 `--force` 时先备份再覆盖。Claude 备份写入 `~/.claude/.agent-kit-backups/<run-id>/`，Codex 备份写入 `~/.codex/.agent-kit-backups/<run-id>/`，并保留各自配置目录下的相对路径；不在用户 home 根目录创建备份目录。
 - 编辑全局指令时修改 `codex/AGENTS.md`；`claude/CLAUDE.md` 只作为指向它的链接。
 - skill 的调用策略两边分别声明：Claude 用 `SKILL.md` frontmatter 的 `disable-model-invocation: true`，Codex 用同一 skill 目录下 `agents/openai.yaml` 的 `policy.allow_implicit_invocation: false`；新增或修改时两处保持一致。`agents/openai.yaml` 的 `interface` 是 Codex 界面的显示名和简介，Claude 不读取。
-- `--force` 不是合并 settings/config 的前提，只会在合并前额外创建备份。
+- `--force` 只在 settings/config 出现冲突时决定以仓库为准，并在写入前备份；其他同步不需要它。
 - `claude/plugins/<plugin-name>/files/` 映射到该插件的用户配置目录。
 - 插件本体、Marketplace、缓存和注册表不纳入仓库。
 - Codex 的机器专属配置（信任目录、模型目录绝对路径、带本机路径的 MCP、插件/Marketplace 状态等）不会从本机回写模板；模板只保留跨机器的偏好。
 - 凭证、会话记录、数据库、`settings.local.json` 和机器专属路径不入库。
 - 全局指令禁止把 hash、checksum、fingerprint、重复审计和假想边界检查当作默认防御手段；只有功能本身、用户明确要求或项目明确要求时才加入。安全、迁移、验证与审阅要求优先。
 
-`claude/settings.json` 和 `codex/config.toml.tmpl` 只放需要跨机器统一的字段，不直接将完整的本机配置复制回仓库。使用 `./install.sh --status` 检查两个 overlay 是否已生效。
+`claude/settings.json` 和 `codex/config.toml.tmpl` 只放需要跨机器统一的字段，不直接将完整的本机配置复制回仓库；模型、推理强度和 fast mode 经常临时调整，不纳入仓库。在 CLI 里改过受管设置后，运行 `./install.sh --target both --pull` 写回仓库，再用 `git diff` 审阅。`./install.sh --status` 列出两边不一致的键，以及本机还有哪些未纳入仓库的键（只显示键名）。

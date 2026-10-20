@@ -3,10 +3,9 @@
     "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1"
   },
-  "effortLevel": "xhigh",
-  "fastMode": true,
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
+  "tui": "fullscreen",
   "disableRemoteControl": true,
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
