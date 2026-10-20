@@ -36,7 +36,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -WithVendo
 
 ## 可选第三方 skills
 
-默认只安装 `skills/` 中的 24 个通用 skill。`vendor/skills/` 保留 Firecrawl 系列等依赖外部服务或额外认证的第三方 skill，目前共 32 个；macOS/Linux 使用 `--with-vendor`，Windows 使用 `-WithVendor` 才会一并安装。
+默认只安装 `skills/` 中的 24 个通用 skill。`vendor/skills/` 保留 Firecrawl 系列等依赖外部服务或额外认证的第三方 skill，目前共 3 个；macOS/Linux 使用 `--with-vendor`，Windows 使用 `-WithVendor` 才会一并安装。`vendor/skills/firecrawl` 已按 Firecrawl CLI 1.19.27 和本仓库保留的 skill 做过本地修改：删去已移除 skill 的引用和过时命令，并给 `firecrawl init` 加上 `--skip-skills`，防止它把上游整套 skill 再装进各 agent 的 skills 目录。从上游同步时需重新核对这些改动。
 
 这些参数只控制本次安装内容；不带参数重新安装不会卸载已经安装的第三方 skill。安装器只安装 skill 文件，不进行服务登录，也不写入 API key 或添加 MCP 配置；使用第三方服务时再按对应 skill 的说明配置认证。
 
@@ -101,6 +101,7 @@ install.ps1                     Windows Codex 安装器
 - Codex 的数组值与 Claude 的数组一样整体替换，不进行拼接；从模板删除字段只表示停止管理，不会从本机 `config.toml` 删除已有字段。
 - macOS/Linux 上，其他受管文件使用符号链接。已有目标默认不覆盖；使用 `--force` 时先备份再覆盖。Claude 备份写入 `~/.claude/.agent-kit-backups/<run-id>/`，Codex 备份写入 `~/.codex/.agent-kit-backups/<run-id>/`，并保留各自配置目录下的相对路径；不在用户 home 根目录创建备份目录。
 - 编辑全局指令时修改 `codex/AGENTS.md`；`claude/CLAUDE.md` 只作为指向它的链接。
+- skill 的调用策略两边分别声明：Claude 用 `SKILL.md` frontmatter 的 `disable-model-invocation: true`，Codex 用同一 skill 目录下 `agents/openai.yaml` 的 `policy.allow_implicit_invocation: false`；新增或修改时两处保持一致。`agents/openai.yaml` 的 `interface` 是 Codex 界面的显示名和简介，Claude 不读取。
 - `--force` 不是合并 settings/config 的前提，只会在合并前额外创建备份。
 - `claude/plugins/<plugin-name>/files/` 映射到该插件的用户配置目录。
 - 插件本体、Marketplace、缓存和注册表不纳入仓库。
