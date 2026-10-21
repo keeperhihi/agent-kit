@@ -68,7 +68,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -WithVendo
 
 模板保留网关连接、凭证存储约定和个人偏好，不重复声明已确认的客户端默认值。`/review` 跟随当前会话模型；`model_verbosity` 和 `service_tier` 作为可调整的回答长度与服务档位保留。`cli_auth_credentials_store = "file"` 虽然也是当前默认值，仍显式保留以表达 `auth.json` 的存储约定。桌面端字段的默认值未公开，按个人偏好保留。
 
-上下文容量和自动压缩阈值使用模型默认值。若旧机器已设置 `model_context_window` 或 `model_auto_compact_token_limit`，需手动删除本机这些覆盖项才能恢复模型默认值；macOS/Linux 的 overlay 安装不会删除模板之外的键。
+模板把 `model_context_window` 设为 `1000000`；不设置时模型默认只有约 258k 上下文。自动压缩阈值使用模型默认值；若旧机器已设置 `model_auto_compact_token_limit`，需手动删除本机这项覆盖才能恢复默认值，macOS/Linux 的安装不会删除模板之外的键。
 
 旧配置中的 `model_supports_reasoning_summaries` 也应手动删除；当前 [官方 JSON schema](https://learn.chatgpt.com/docs/config-schema.json) 已不包含此字段。摘要详细程度仍由 `model_reasoning_summary = "detailed"` 指定。
 
