@@ -103,7 +103,7 @@ install.ps1                     Windows Codex 安装器
 - macOS/Linux 上，其他受管文件使用符号链接。已有目标默认不覆盖；使用 `--force` 时先备份再覆盖。Claude 备份写入 `~/.claude/.agent-kit-backups/<run-id>/`，Codex 备份写入 `~/.codex/.agent-kit-backups/<run-id>/`，并保留各自配置目录下的相对路径；不在用户 home 根目录创建备份目录。
 - 编辑全局指令时修改 `codex/AGENTS.md`；`claude/CLAUDE.md` 只作为指向它的链接。
 - skill 的调用策略两边分别声明：Claude 用 `SKILL.md` frontmatter 的 `disable-model-invocation: true`，Codex 用同一 skill 目录下 `agents/openai.yaml` 的 `policy.allow_implicit_invocation: false`；新增或修改时两处保持一致。`agents/openai.yaml` 的 `interface` 是 Codex 界面的显示名和简介，Claude 不读取。
-- `--force` 只在 settings/config 出现冲突时决定以仓库为准，并在写入前备份；其他同步不需要它。
+- macOS/Linux 上，`--force` 对 Codex `config.toml` 先备份原文件，再用 `codex/config.toml.tmpl` 完整替换，并重置同步记录；模板之外的本机字段也会移除，跨多行值不影响覆盖。普通安装仍按上述规则合并。对 Claude `settings.json`，`--force` 在双边冲突时取仓库值，并在写入前备份。
 - `claude/plugins/<plugin-name>/files/` 映射到该插件的用户配置目录。
 - 插件本体、Marketplace、缓存和注册表不纳入仓库。
 - Codex 的机器专属配置（信任目录、模型目录绝对路径、带本机路径的 MCP、插件/Marketplace 状态等）不会从本机回写模板；模板只保留跨机器的偏好。

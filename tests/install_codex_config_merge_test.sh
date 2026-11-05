@@ -125,7 +125,7 @@ legacy_backup_count="$(find "$CODEX_DIR" -maxdepth 1 -type f -name 'config.toml.
 backup_file="$(find "$CODEX_DIR/.agent-kit-backups" -type f -path '*/config.toml' | head -1)"
 grep -F 'model = "repo"' "$backup_file" >/dev/null
 grep -F 'model = "repo-v2"' "$CODEX_DIR/config.toml" >/dev/null
-grep -F 'local_only = true' "$CODEX_DIR/config.toml" >/dev/null
+cmp -s "$TEST_REPO/codex/config.toml.tmpl" "$CODEX_DIR/config.toml"
 
 # An unsupported overlay line must leave the local config untouched.
 printf '%s\n' 'not valid TOML' > "$TEST_REPO/codex/config.toml.tmpl"

@@ -28,7 +28,7 @@ usage() {
   --with-vendor                同时安装 vendor/skills 中的第三方 skill（默认跳过）
   --dry-run                    只打印将要做什么
   --force                      覆盖已有目标前备份；备份放在对应配置目录的 .agent-kit-backups/<run-id>/
-                               settings.json / config.toml 两边都改过的键以仓库为准
+                               settings.json 冲突键以仓库为准；config.toml 完整替换为仓库模板
   --pull                       把本机改过的受管设置（如在 CLI 里改的）写回仓库，用 git diff 审阅
   --status                     只检查安装状态，不改动任何东西
   --uninstall                  移除本仓库装出去的符号链接（不动普通文件）
@@ -186,6 +186,7 @@ json_object() { jq -e 'type == "object"' "$1" >/dev/null 2>&1; }
 #   只有仓库改了          → install 应用到本机
 #   只有本机改了或删了    → 保留本机；--pull 写回仓库
 #   两边都改了            → 冲突；--pull 取本机，--force 取仓库
+# Codex config.toml 的 --force 直接备份并完整替换，不走三方同步。
 # 还没有同步记录时，install/status 以仓库为准，--pull 以本机为准。
 # 比较结果按行报告，字段以 \037 分隔：状态、键、仓库值、本机值、本机是否有值。
 SEP=$'\037'
@@ -678,6 +679,24 @@ sync_codex_config() { # sync_codex_config <install|status|pull> <仓库 overlay>
       status) warn "config.toml 未安装" ;;
       pull) warn "config.toml: 本机没有 ${dst}，无可写回" ;;
     esac
+    return 0
+  fi
+  if [ "$mode" = install ] && [ "$FORCE" = 1 ]; then
+    if [ "$DRY" = 1 ]; then
+      say "~ config.toml 将备份并完整替换为仓库模板"
+      return 0
+    fi
+    if ! out="$(mktemp "${dst}.tmp.XXXXXX")"; then
+      warn "config.toml: 无法创建临时文件，原文件未改动"
+      return 0
+    fi
+    if cp -- "$src" "$out" && backup_target copy "$dst" "config.toml" && mv -- "$out" "$dst"; then
+      save_base "$src" "$base"
+      say "~ config.toml 已完整替换为仓库模板"
+    else
+      warn "config.toml: 覆盖失败，原文件未改动"
+    fi
+    rm -f -- "$out"
     return 0
   fi
   if [ -f "$base" ]; then has_base=1; base_in="$base"; fi

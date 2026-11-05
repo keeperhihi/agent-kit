@@ -118,6 +118,26 @@ run_install
 has_line "$LOCAL" '"model_verbosity" = "high"' "install did not apply the repository change"
 has_line "$LOCAL" 'approval_policy = "on-failure"' "install overwrote the local change"
 
+# --force 完整复制模板，包括替换 provider 和本机跨多行值。
+cp "$LOCAL" "$TEST_ROOT/local.before-force"
+replace_line "$LOCAL" '"name" = "cm"' ''
+replace_line "$LOCAL" 'status_line = ["model", "dir"]' 'status_line = [
+  "local",
+]'
+run_install --force --dry-run
+[ "$status" -eq 0 ] || fail "force dry-run exited with $status" "$output"
+has_line "$LOCAL" 'approval_policy = "on-failure"' "force dry-run changed the local value"
+lacks_line "$LOCAL" '"name" = "cm"' "force dry-run restored a deleted key"
+cp "$LOCAL" "$TEST_ROOT/local.force-backup"
+run_install --force
+[ "$status" -eq 0 ] || fail "force install exited with $status" "$output"
+cmp -s "$OVERLAY" "$LOCAL" || fail "force did not replace the entire config with the template" "$output"
+cmp -s "$OVERLAY" "$BASE" || fail "force did not reset the sync record" "$output"
+backup_file="$(find "$CODEX_DIR/.agent-kit-backups" -type f -name config.toml | head -1)"
+cmp -s "$TEST_ROOT/local.force-backup" "$backup_file" || fail "force did not back up the original config" "$output"
+# 恢复本机修改，继续验证普通 install / pull 的同步行为。
+cp "$TEST_ROOT/local.before-force" "$LOCAL"
+
 # --pull 写回本机改动，模板里的注释保留。
 run_install --pull
 [ "$status" -eq 0 ] || fail "pull exited with $status" "$output"
