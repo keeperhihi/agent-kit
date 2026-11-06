@@ -1,11 +1,13 @@
 # Windows installer: Codex only. Copies this repository into the Codex config directory,
 # so the repository can be deleted afterwards. .agent-kit\ in that directory records the
-# managed paths and their originals from before the first takeover; -Restore puts them back.
+# managed paths, their originals from before the first takeover, and whether vendor skills
+# are wanted; -Restore puts the originals back.
 # Behaves like install.sh. Keep this file ASCII-only so Windows PowerShell 5.1 reads it correctly.
 [CmdletBinding()]
 param(
     [string]$CmKey = '',
     [switch]$WithVendor,
+    [switch]$WithoutVendor,
     [switch]$Restore
 )
 
@@ -15,6 +17,7 @@ $CodexDir = if ($env:CODEX_HOME) { $env:CODEX_HOME.TrimEnd('\', '/') } else { Jo
 $State = Join-Path $CodexDir '.agent-kit'
 $ManagedList = Join-Path $State 'managed'
 $Original = Join-Path $State 'original'
+$VendorChoice = Join-Path $State 'with-vendor'
 $CmKeyGiven = $PSBoundParameters.ContainsKey('CmKey')
 
 function Test-Entry([string]$Path) {
@@ -76,14 +79,22 @@ function Test-CmKey([string]$Path) {
     }
 }
 
+if ($WithVendor -and $WithoutVendor) { throw '-WithVendor and -WithoutVendor cannot be combined' }
 if ($Restore) {
-    if ($CmKeyGiven -or $WithVendor) { throw '-Restore cannot be combined with -CmKey or -WithVendor' }
+    if ($CmKeyGiven -or $WithVendor -or $WithoutVendor) { throw '-Restore cannot be combined with other options' }
     if (-not (Test-Path -LiteralPath $State)) { throw "No install record in $CodexDir" }
     foreach ($Relative in Get-Managed) { Restore-Entry $Relative }
     Remove-Entry $State
     Write-Host "Restored $CodexDir"
     return
 }
+
+Write-Host "-> $CodexDir"
+New-Item -ItemType Directory -Path $Original -Force | Out-Null
+# Remember whether this machine wants vendor skills; with neither switch the last choice stands.
+if ($WithVendor) { [IO.File]::WriteAllText($VendorChoice, '') }
+if ($WithoutVendor) { Remove-Entry $VendorChoice }
+$Vendor = Test-Path -LiteralPath $VendorChoice
 
 # Managed path (relative to the Codex config directory) -> source in this repository.
 $Targets = [ordered]@{ 'AGENTS.md' = (Join-Path $Repo 'instructions.md'); 'auth.json' = $null }
@@ -93,7 +104,7 @@ foreach ($File in Get-ChildItem -LiteralPath $Mirror -Recurse -File) {
     if ($Relative -notmatch '(^|/)\.') { $Targets[$Relative] = $File.FullName }
 }
 $SkillRoots = @(Join-Path $Repo 'skills')
-if ($WithVendor) { $SkillRoots += Join-Path $Repo 'vendor/skills' }
+if ($Vendor) { $SkillRoots += Join-Path $Repo 'vendor/skills' }
 foreach ($Root in $SkillRoots) {
     foreach ($Skill in Get-ChildItem -LiteralPath $Root -Directory) {
         $Relative = "skills/$($Skill.Name)"
@@ -101,8 +112,6 @@ foreach ($Root in $SkillRoots) {
     }
 }
 
-Write-Host "-> $CodexDir"
-New-Item -ItemType Directory -Path $Original -Force | Out-Null
 $Managed = Get-Managed
 
 # First takeover of a path: save the original, then register it. Saved originals are never overwritten.
@@ -143,6 +152,6 @@ foreach ($Relative in $Targets.Keys) {
 }
 
 [IO.File]::WriteAllLines($ManagedList, [string[]]@($Targets.Keys))
-Write-Host "  Installed $($Targets.Count) items"
+Write-Host "  Installed $($Targets.Count) items$(if ($Vendor) { ', including vendor skills' })"
 if ($EmptyKey) { Write-Host "Set OPENAI_API_KEY in $CodexDir\auth.json to your CodexManager gateway key." }
 Write-Host 'Done. Start the CodexManager gateway, then restart Codex and open a new session. Undo with -Restore.'

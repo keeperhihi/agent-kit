@@ -85,16 +85,21 @@ try {
         Assert ((Read-Key) -eq '') "not kept: $StaleAuth"
     }
 
-    # Skills removed from the repository get their originals back; vendor skills follow -WithVendor.
+    # Skills removed from the repository get their originals back; the vendor choice is remembered.
     Move-Item -LiteralPath (Join-Path $Repo 'skills/alpha') -Destination (Join-Path $Root 'alpha')
     Invoke-Installer -WithVendor
     Assert (Test-Path -LiteralPath (Join-Path $Codex 'skills/alpha/notes.md')) 'removed skill restored'
     Assert ((Read-Text (Join-Path $Codex 'skills/gamma/SKILL.md')) -eq '# gamma') 'vendor skill installed'
     Invoke-Installer
-    Assert (-not (Test-Path -LiteralPath (Join-Path $Codex 'skills/gamma'))) 'vendor skill removed without -WithVendor'
+    Assert (Test-Path -LiteralPath (Join-Path $Codex 'skills/gamma')) 'vendor choice remembered'
+    Invoke-Installer -WithoutVendor
+    Assert (-not (Test-Path -LiteralPath (Join-Path $Codex 'skills/gamma'))) '-WithoutVendor removes vendor skills'
+    Invoke-Installer
+    Assert (-not (Test-Path -LiteralPath (Join-Path $Codex 'skills/gamma'))) 'opt-out remembered'
     Move-Item -LiteralPath (Join-Path $Root 'alpha') -Destination (Join-Path $Repo 'skills/alpha')
     Invoke-Installer
 
+    Assert (Test-Fails -WithVendor -WithoutVendor) 'vendor switches cannot be combined'
     Assert (Test-Fails -Restore -CmKey 'unused') '-Restore rejects other options'
     Invoke-Installer -Restore
     Assert ((Read-Text (Join-Path $Codex 'config.toml')) -eq 'model = "local"') 'original config restored'

@@ -18,6 +18,8 @@ cd agent-kit
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -CmKey '<key>'
 ```
 
+firecrawl 的三个 skill（`vendor/skills/`）默认不装：它们依赖 Firecrawl CLI 和账号，没装 CLI 时 agent 会自己去全局安装。要用就加 `--with-vendor`（Windows 用 `-WithVendor`），同一台机器之后重装会记住这个选择，`--without-vendor` 关掉。
+
 装之前请留意：
 
 - 装的是副本，装完可以删掉仓库。
@@ -58,7 +60,7 @@ claude plugin install claude-hud@claude-hud
 | `instructions.md` | 全局指令，装成 `CLAUDE.md` 和 `AGENTS.md` |
 | `claude/`、`codex/` | 每个文件装到对应配置目录的同一相对路径，隐藏文件除外 |
 | `skills/` | 两边共用的 skills |
-| `vendor/skills/` | 第三方 skills，`--with-vendor` 才装；来源见 `vendor/skill-lock.json` |
+| `vendor/skills/` | 第三方 skills，`--with-vendor` 才装，每台机器记住选择；来源见 `vendor/skill-lock.json` |
 | `install.ps1` | Windows 安装器，只装 Codex |
 | `tests/` | 两个安装器的测试，只用临时目录 |
 

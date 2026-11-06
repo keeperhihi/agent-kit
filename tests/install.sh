@@ -102,17 +102,21 @@ for auth in '{"auth_mode":"chatgpt","OPENAI_API_KEY":"old"}' '{"auth_mode":"apik
   check "不保留 $auth" jq -e '. == {auth_mode: "apikey", OPENAI_API_KEY: ""}' "$codex/auth.json" > /dev/null
 done
 
-# 仓库里删掉的 skill 放回原样；第三方 skill 只在带 --with-vendor 时存在。
+# 仓库里删掉的 skill 放回原样；要不要第三方 skill，每台机器记住上次的选择。
 mv "$repo/skills/alpha" "$root/alpha"
 run --with-vendor || fail '带 --with-vendor 重装失败'
 check '删掉的 skill 恢复本机原样' test -f "$claude/skills/alpha/notes.md"
 check '删掉的 skill 原本没有就移除' test ! -e "$codex/skills/alpha"
 check '装上第三方 skill' cmp "$repo/vendor/skills/gamma/SKILL.md" "$claude/skills/gamma/SKILL.md"
-run || fail '不带 --with-vendor 重装失败'
-check '不带 --with-vendor 时移除第三方 skill' test ! -e "$claude/skills/gamma"
+run --without-vendor || fail '带 --without-vendor 重装失败'
+check '--without-vendor 移除第三方 skill' test ! -e "$claude/skills/gamma"
+run || fail '不带参数重装失败'
+check '记住不要第三方 skill' test ! -e "$claude/skills/gamma"
 mv "$root/alpha" "$repo/skills/alpha"
-run || fail '加回 skill 后重装失败'
+run --with-vendor || fail '加回 skill 后重装失败'
 check '重新接管同名 skill' test ! -e "$claude/skills/alpha/notes.md"
+run || fail '不带参数重装失败'
+check '记住要第三方 skill' test -f "$codex/skills/gamma/SKILL.md"
 
 run -r || fail '回滚失败'
 check '恢复原配置' test "$(cat "$claude/settings.json")" = local
@@ -123,13 +127,15 @@ check '删除原本没有的文件' test ! -e "$claude/CLAUDE.md"
 check '不动无关 skill' test -f "$codex/skills/mine/SKILL.md"
 check '清理安装记录' test ! -e "$claude/.agent-kit" -a ! -e "$codex/.agent-kit"
 
-# 只装 Claude 时不碰 Codex；无效参数直接退出。
+# 只装 Claude 时不碰 Codex；回滚会忘掉第三方 skill 的选择；无效参数直接退出。
 codex="$root/untouched codex"
 run claude || fail '只装 Claude 失败'
 check '只装 Claude 时不碰 Codex' test ! -e "$codex"
+check '回滚后不再记得第三方 skill' test ! -e "$claude/skills/gamma"
 expect_failure --cm-key
 expect_failure claude --cm-key key
 expect_failure -r --with-vendor
+expect_failure --with-vendor --without-vendor
 expect_failure --unknown
 
 # 真实仓库：装完删掉仓库，配置照样完整。

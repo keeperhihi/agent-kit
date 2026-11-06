@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 把本仓库复制到 Claude Code / Codex 的配置目录，装完不再依赖仓库。
-# 每个配置目录的 .agent-kit/ 记下受管路径（managed）和它们第一次被接管前的原样（original/）：
-# 重装时把仓库里已经没有的路径放回原样，-r 把全部受管路径放回原样。
+# 每个配置目录的 .agent-kit/ 记下受管路径（managed）、它们第一次被接管前的原样（original/）
+# 和要不要第三方 skills（with-vendor）。重装时把仓库里已经没有的路径放回原样，-r 把全部受管路径放回原样。
 # 需兼容 macOS 自带的 Bash 3.2 和 BSD 工具。
 set -euo pipefail
 umask 077
@@ -14,13 +14,14 @@ trap 'exit 143' TERM
 
 usage() {
   cat <<'EOF'
-用法: ./install.sh [claude] [codex] [--with-vendor] [--cm-key KEY]
+用法: ./install.sh [claude] [codex] [--with-vendor | --without-vendor] [--cm-key KEY]
       ./install.sh -r [claude] [codex]
 
-  claude, codex   只处理指定的客户端；都不写就两个都处理
-  --with-vendor   同时安装 vendor/skills 里的第三方 skills
-  --cm-key KEY    把 CodexManager 网关 key 写入 auth.json；不写时保留已有的
-  -r              恢复成第一次安装之前的样子
+  claude, codex     只处理指定的客户端；都不写就两个都处理
+  --with-vendor     同时安装 vendor/skills 里的第三方 skills
+  --without-vendor  不装第三方 skills；两个都不写时沿用这台机器上次的选择
+  --cm-key KEY      把 CodexManager 网关 key 写入 auth.json；不写时保留已有的
+  -r                恢复成第一次安装之前的样子
 EOF
 }
 
@@ -28,11 +29,14 @@ die() { printf '错误：%s\n' "$*" >&2; exit 1; }
 say() { printf '  %s\n' "$*"; }
 exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
-restore=0 vendor=0 cm_key='' cm_key_set=0 clients=''
+restore=0 vendor='' cm_key='' cm_key_set=0 clients=''
 while [ $# -gt 0 ]; do
   case "$1" in
     claude|codex) case " $clients " in *" $1 "*) ;; *) clients="$clients $1" ;; esac ;;
-    --with-vendor) vendor=1 ;;
+    --with-vendor|--without-vendor)
+      [ -z "$vendor" ] || [ "$vendor" = "$1" ] || { usage >&2; exit 2; }
+      vendor="$1"
+      ;;
     --cm-key)
       [ $# -ge 2 ] || { usage >&2; exit 2; }
       cm_key="$2" cm_key_set=1
@@ -45,7 +49,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$clients" ] || clients='claude codex'
-if [ "$restore" = 1 ] && { [ "$vendor" = 1 ] || [ "$cm_key_set" = 1 ]; }; then usage >&2; exit 2; fi
+if [ "$restore" = 1 ] && { [ -n "$vendor" ] || [ "$cm_key_set" = 1 ]; }; then usage >&2; exit 2; fi
 case " $clients " in *' codex '*) ;; *) [ "$cm_key_set" = 0 ] || die '--cm-key 只用于 Codex' ;; esac
 
 config_dir() { # config_dir <客户端>
@@ -57,7 +61,7 @@ config_dir() { # config_dir <客户端>
   printf '%s\n' "${dir%/}"
 }
 
-targets() { # targets <客户端>：全部受管路径，相对配置目录
+targets() { # targets <客户端> <配置目录>：全部受管路径，相对配置目录
   local d
   case "$1" in
     claude) echo CLAUDE.md ;;
@@ -70,7 +74,7 @@ targets() { # targets <客户端>：全部受管路径，相对配置目录
     [ -d "$d" ] || continue
     echo "skills/$(basename "$d")"
   done
-  [ "$vendor" = 1 ] || return 0
+  [ -e "$2/.agent-kit/with-vendor" ] || return 0
   for d in "$repo"/vendor/skills/*/; do
     [ -d "$d" ] || continue
     echo "skills/$(basename "$d")"
@@ -141,13 +145,17 @@ write_auth() { # write_auth <auth.json>
 }
 
 install_client() { # install_client <客户端>
-  local dir state list rel
+  local dir state list rel note=''
   dir="$(config_dir "$1")"
   state="$dir/.agent-kit"
-  list="$(targets "$1" | sort -u)"
   echo "→ $dir"
   mkdir -p "$state/original"
   touch "$state/managed"
+  case "$vendor" in # 两个都没写就沿用上次的选择
+    --with-vendor) touch "$state/with-vendor" ;;
+    --without-vendor) rm -f "$state/with-vendor" ;;
+  esac
+  list="$(targets "$1" "$dir" | sort -u)"
 
   # 第一次接管的路径：先存原样再登记。存过的原样不再覆盖。
   while IFS= read -r rel; do
@@ -176,7 +184,8 @@ install_client() { # install_client <客户端>
 
   printf '%s\n' "$list" > "$state/managed.new"
   mv -f "$state/managed.new" "$state/managed"
-  say "已安装 $(grep -c '' <<< "$list") 项"
+  [ ! -e "$state/with-vendor" ] || note='，含第三方 skills'
+  say "已安装 $(grep -c '' <<< "$list") 项$note"
 }
 
 restore_client() { # restore_client <配置目录>
