@@ -26,8 +26,8 @@ for target in .claude .codex; do
   printf '%s\n' 'local skill' > "$TEST_HOME/$target/skills/local/SKILL.md"
 done
 
-HOME="$TEST_HOME" CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" \
-  /bin/bash "$TEST_REPO/install.sh" --target both >/dev/null
+CODEX_HOME="$TEST_HOME/.codex" CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" \
+  "$BASH" "$TEST_REPO/install.sh" --target both >/dev/null
 for target in .claude .codex; do
   [ ! -e "$TEST_HOME/$target/skills/firecrawl" ]
   [ ! -L "$TEST_HOME/$target/skills/firecrawl" ]
@@ -38,21 +38,21 @@ done
 cmp -s "$TEST_REPO/codex/AGENTS.md" "$TEST_HOME/.codex/AGENTS.md"
 cmp -s "$TEST_REPO/codex/AGENTS.md" "$TEST_HOME/.claude/CLAUDE.md"
 
-HOME="$TEST_HOME" CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" \
-  /bin/bash "$TEST_REPO/install.sh" --target both --with-vendor --dry-run >/dev/null
+CODEX_HOME="$TEST_HOME/.codex" CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" \
+  "$BASH" "$TEST_REPO/install.sh" --target both --with-vendor --dry-run >/dev/null
 for target in .claude .codex; do
   [ ! -L "$TEST_HOME/$target/skills/firecrawl" ]
 done
 
-HOME="$TEST_HOME" CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" \
-  /bin/bash "$TEST_REPO/install.sh" --target both --with-vendor >/dev/null
+CODEX_HOME="$TEST_HOME/.codex" CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" \
+  "$BASH" "$TEST_REPO/install.sh" --target both --with-vendor >/dev/null
 for target in .claude .codex; do
   [ "$(readlink "$TEST_HOME/$target/skills/firecrawl")" = "$TEST_REPO/vendor/skills/firecrawl" ]
 done
 
 # A later default install must not uninstall skills explicitly selected earlier.
-HOME="$TEST_HOME" CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" \
-  /bin/bash "$TEST_REPO/install.sh" --target both >/dev/null
+CODEX_HOME="$TEST_HOME/.codex" CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" \
+  "$BASH" "$TEST_REPO/install.sh" --target both >/dev/null
 for target in .claude .codex; do
   [ -L "$TEST_HOME/$target/skills/firecrawl" ]
   [ -L "$TEST_HOME/$target/skills/external" ]

@@ -28,14 +28,14 @@ claude/plugins/claude-hud/files/config.json
 - 插件自己的 setup/configure 命令处理需要探测本机环境的配置；
 - `files/` 保存已确认需要跨机器保持一致的用户配置。
 
-`install.sh` 在插件安装前或安装后执行都可以。安装前执行时，只是提前建立配置链接；安装后执行时，会接管内容相同的本机配置。
+`install.sh --target claude` 在插件安装前或安装后执行都可以。安装前执行时，会提前建立配置链接；已有同名本机配置时，先备份再替换。
 
 ## 新增插件
 
 1. 创建 `claude/plugins/<plugin-name>/README.md`，记录需要手动执行的 Claude Code 命令。
 2. 如果有可移植配置，按它在 `~/.claude/plugins/<plugin-name>/` 下的相对路径放入 `files/`。
-3. 运行 `./install.sh`。目标是同内容的普通文件时会自动接管为链接；内容不同时只报警不覆盖，先 `diff` 并手工合并后再重试。
-4. 运行 `./install.sh --status` 确认受管文件已指向仓库。
+3. 运行 `./install.sh --target claude`，已有配置会备份后替换为仓库链接。
+4. 按插件说明完成本机初始化，再运行 `./install.sh --target claude --status` 检查安装状态；初始化写入的本机设置会使 `settings.json` 与仓库不同。
 
 ## 不入库
 

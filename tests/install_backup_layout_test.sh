@@ -28,8 +28,8 @@ cat > "$CODEX_DIR/config.toml" <<'TOML'
 model = "local"
 TOML
 
-output="$(HOME="$TEST_HOME" \
-  /bin/bash "$TEST_REPO/install.sh" --target codex --force 2>&1)"
+output="$(CODEX_HOME="$CODEX_DIR" \
+  "$BASH" "$TEST_REPO/install.sh" --target codex 2>&1)"
 
 [ -L "$CODEX_DIR/skills/example" ]
 [ "$(readlink "$CODEX_DIR/skills/example")" = "$TEST_REPO/skills/example" ]
@@ -57,4 +57,4 @@ case "$output" in
     ;;
 esac
 
-printf 'PASS: --force stores link and config backups in one run directory\n'
+printf 'PASS: install stores link and config backups in one run directory\n'
