@@ -1,26 +1,12 @@
-# Codex 通用配置
-
-model_provider = "cm"
-model_context_window = 1000000
+# Codex 个人偏好补丁。模型、路由、推理强度、上下文和 MCP 由 Magpie 管理。
 
 model_reasoning_summary = "detailed"
 model_verbosity = "medium"
 
 web_search = "live"
-service_tier = "default"
 
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
-
-# 固定使用 auth.json，明确跨设备的凭证存储约定。
-cli_auth_credentials_store = "file"
-
-[model_providers.cm]
-name = "cm"
-# CodexManager 的默认本机 gateway。
-base_url = "http://localhost:48760/v1"
-# 使用 auth.json 中的 API key；认证开关属于 provider。
-requires_openai_auth = true
 
 [notice]
 hide_rate_limit_model_nudge = true
@@ -28,12 +14,7 @@ hide_rate_limit_model_nudge = true
 [tui]
 status_line = ["model-with-reasoning", "current-dir", "permissions", "context-used", "five-hour-limit", "weekly-limit", "context-window-size", "fast-mode", "task-progress"]
 
-[mcp_servers.openaiDeveloperDocs]
-url = "https://developers.openai.com/mcp"
-
 [desktop]
-# Windows App 实测需要显式启用 max，保留此界面设置。
-enabled-reasoning-efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
 conversationDetailMode = "STEPS_PROSE"
 sansFontSize = 14
 codeFontSize = 13

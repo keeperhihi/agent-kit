@@ -8,6 +8,8 @@
 !/instructions.md
 !/install.sh
 !/install.ps1
+!/preferences.py
+!/requirements.txt
 !/claude/**
 !/codex/**
 !/skills/**
@@ -23,3 +25,6 @@
 **/.claude.json
 **/settings.local.json
 **/*.bak.*
+.venv/
+__pycache__/
+*.pyc
