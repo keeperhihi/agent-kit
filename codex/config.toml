@@ -1,4 +1,4 @@
-# Codex 个人偏好补丁。模型、路由、推理强度、上下文和 MCP 由 Magpie 管理。
+# Codex 个人偏好补丁。模型、接入、推理强度、上下文和 MCP 由客户端或所选网关管理。
 
 model_reasoning_summary = "detailed"
 model_verbosity = "medium"

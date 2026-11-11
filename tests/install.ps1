@@ -23,6 +23,7 @@ try {
     foreach ($Name in 'install.ps1', 'preferences.py', 'requirements.txt') {
         Copy-Item -LiteralPath (Join-Path $Source $Name) -Destination $Repo
     }
+    Copy-Item -LiteralPath (Join-Path $Source 'gateways') -Destination $Repo -Recurse
     Write-Text (Join-Path $Repo 'codex/config.toml') "approval_policy = `"never`"`n"
     $Config = Join-Path $Codex 'config.toml'
     $Auth = Join-Path $Codex 'auth.json'
@@ -31,15 +32,15 @@ try {
     $OriginalAuth = Read-Text $Auth
     $env:CODEX_HOME = $Codex
     $Installer = Join-Path $Repo 'install.ps1'
-    & $Installer
+    & $Installer -Gateway magpie
     Assert ((Read-Text $Config).Contains('model = "magpie/test"')) 'model preserved'
     Assert ((Read-Text $Config).Contains('approval_policy = "never"')) 'preference applied'
     Assert ((Read-Text $Auth) -eq $OriginalAuth) 'login preserved'
     Assert (-not (Test-Path (Join-Path $Codex 'AGENTS.md'))) 'instructions not installed'
     Assert (-not (Test-Path (Join-Path $Codex 'skills'))) 'skills not installed'
-    & $Installer
+    & $Installer -Gateway magpie
     Write-Text $Config ((Read-Text $Config).Replace('magpie/test', 'magpie/changed'))
-    & $Installer -Restore
+    & $Installer -Restore -Gateway magpie
     Assert ((Read-Text $Config).Contains('model = "magpie/changed"')) 'changed model survives restore'
     Assert ((Read-Text $Config).Contains('approval_policy = "on-request"')) 'first preference restored'
     Assert ((Read-Text $Auth) -eq $OriginalAuth) 'restore preserves login'

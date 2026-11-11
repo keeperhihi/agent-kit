@@ -1,0 +1,8 @@
+model_provider = "cm"
+cli_auth_credentials_store = "file"
+
+[model_providers.cm]
+name = "cm"
+base_url = "http://localhost:48760/v1"
+wire_api = "responses"
+requires_openai_auth = true

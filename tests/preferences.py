@@ -21,14 +21,20 @@ class InstallerTest(unittest.TestCase):
         self.repo.mkdir()
         for name in ["install.sh", "install.ps1", "preferences.py", "requirements.txt"]:
             shutil.copy2(SOURCE / name, self.repo / name)
+        shutil.copytree(SOURCE / "gateways", self.repo / "gateways")
         self.claude = self.root / "claude home"
         self.codex = self.root / "codex home"
         self.environment = dict(os.environ, CLAUDE_CONFIG_DIR=str(self.claude),
                                 CODEX_HOME=str(self.codex) + "/",
                                 PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"])
-        self.write(self.repo / "claude/settings.json", '{"theme":"dark","env":{"DISABLE_TELEMETRY":"1"},"permissions":{"defaultMode":"bypassPermissions"}}')
+        self.environment.pop("CODEXMANAGER_API_KEY", None)
+        self.write(self.repo / "claude/settings.json", '{"theme":"dark","idleCompaction":false,"env":{"DISABLE_TELEMETRY":"1"},"permissions":{"defaultMode":"bypassPermissions"}}')
         self.write(self.repo / "claude/plugins/claude-hud/config.json", '{"display":{"showModel":true}}')
         self.write(self.repo / "codex/config.toml", 'approval_policy = "never"\n[tui]\nstatus_line = ["model"]\n[desktop]\nappearanceTheme = "light"\n')
+        self.write(self.repo / "instructions.md", "# Shared instructions\n")
+        self.write(self.repo / "skills/example/SKILL.md", "# Example\n")
+        self.write(self.repo / "skills/example/scripts/check.sh", "echo example\n")
+        self.write(self.repo / "vendor/skills/vendor-example/SKILL.md", "# Vendor example\n")
 
     def write(self, path, value):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,7 +56,7 @@ class InstallerTest(unittest.TestCase):
         return tomlkit.parse((self.codex / "config.toml").read_text())
 
 
-class PreferencesTest(InstallerTest):
+class ReadyInstallerTest(InstallerTest):
     @classmethod
     def setUpClass(cls):
         if sys.prefix == sys.base_prefix:
@@ -60,6 +66,11 @@ class PreferencesTest(InstallerTest):
         super().setUp()
         # Reuse the test environment; BootstrapTest exercises real creation.
         (self.repo / ".venv").symlink_to(Path(sys.prefix), target_is_directory=True)
+
+
+class GatewayPreferencesTest(ReadyInstallerTest):
+    def run_installer(self, *args, success=True):
+        return super().run_installer("--gateway", "magpie", *args, success=success)
 
     def existing(self):
         self.write(self.claude / "settings.json", json.dumps({
@@ -237,10 +248,354 @@ trust_level = "trusted"
         cc = self.json(self.claude / "settings.json")
         self.assertEqual(cc["model"], "deepseek/deepseek-flash[1m]")
         self.assertEqual(cc["effortLevel"], "max")
+        self.assertIs(cc["idleCompaction"], False)
         self.assertEqual(self.toml()["model"], "codex/gpt-6-astra")
         self.assert_untouched()
         self.run_installer("-r")
         self.assert_untouched()
+
+    def test_default_install_refuses_existing_external_resources(self):
+        self.existing()
+        original = (self.claude / "settings.json").read_bytes()
+        super().run_installer(success=False)
+        self.assertEqual((self.claude / "settings.json").read_bytes(), original)
+        self.assertFalse((self.claude / ".agent-kit").exists())
+        self.assert_untouched()
+
+    def test_single_dash_gateway_option_is_accepted(self):
+        super().run_installer("-gateway", "magpie", "claude")
+        self.assertEqual(self.json(self.claude / "settings.json")["theme"], "dark")
+        self.assertFalse((self.claude / "CLAUDE.md").exists())
+        self.assertFalse((self.claude / "skills").exists())
+
+
+class ResourcesTest(ReadyInstallerTest):
+    def existing_copies(self):
+        self.claude.mkdir(exist_ok=True)
+        shutil.copy2(self.repo / "instructions.md", self.claude / "CLAUDE.md")
+        shutil.copytree(self.repo / "skills", self.claude / "skills")
+        shutil.copytree(self.repo / "vendor/skills/vendor-example", self.claude / "skills/vendor-example")
+
+    def test_native_login_and_existing_copies_survive_install_and_restore(self):
+        self.existing_copies()
+        self.write(self.claude / "settings.json", '{"model":"fable[1m]","idleCompaction":true}')
+        self.write(self.claude / ".credentials.json", '{"claudeAiOauth":{"accessToken":"test-token"}}')
+        self.write(self.claude / ".agent-kit/managed", "CLAUDE.md\nskills/example\n")
+        self.run_installer("claude")
+        settings = self.json(self.claude / "settings.json")
+        self.assertEqual(settings["model"], "fable[1m]")
+        self.assertIs(settings["idleCompaction"], False)
+        self.assertNotIn("ANTHROPIC_BASE_URL", settings["env"])
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", settings["env"])
+        self.assertFalse(self.codex.exists())
+        for target, source in [("CLAUDE.md", "instructions.md"), ("skills/example", "skills/example"),
+                               ("skills/vendor-example", "vendor/skills/vendor-example")]:
+            self.assertTrue((self.claude / target).is_symlink())
+            self.assertEqual((self.claude / target).resolve(), self.repo / source)
+        # Repository edits reach the clients without a copy or another install.
+        self.write(self.repo / "instructions.md", "# Updated instructions\n")
+        self.write(self.repo / "skills/example/scripts/check.sh", "echo updated\n")
+        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# Updated instructions\n")
+        self.assertEqual((self.claude / "skills/example/scripts/check.sh").read_text(), "echo updated\n")
+        self.run_installer("claude")
+        self.run_installer("-r", "claude")
+        self.assertFalse((self.claude / "CLAUDE.md").is_symlink())
+        self.assertFalse((self.claude / "skills/example").is_symlink())
+        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# Shared instructions\n")
+        self.assertEqual((self.claude / "skills/example/scripts/check.sh").read_text(), "echo example\n")
+        self.assertEqual(self.json(self.claude / "settings.json"), {"model": "fable[1m]", "idleCompaction": True})
+        self.assertEqual((self.claude / ".credentials.json").read_text(), '{"claudeAiOauth":{"accessToken":"test-token"}}')
+        self.assertEqual((self.claude / ".agent-kit/managed").read_text(), "CLAUDE.md\nskills/example\n")
+        self.assertFalse((self.claude / ".agent-kit/resource-backups").exists())
+
+    def test_new_resources_and_removed_skills_with_separate_preference_restore(self):
+        self.write(self.codex / "skills/other/SKILL.md", "# Unmanaged skill\n")
+        self.run_installer()
+        self.assertEqual((self.codex / "AGENTS.md").resolve(), self.repo / "instructions.md")
+        shutil.rmtree(self.repo / "vendor/skills/vendor-example")
+        self.run_installer()
+        for client in [self.claude, self.codex]:
+            self.assertFalse((client / "skills/vendor-example").is_symlink())
+        self.run_installer("-r", "--gateway", "magpie")
+        self.assertTrue((self.codex / "AGENTS.md").is_symlink())
+        self.run_installer("-r")
+        for client, name in [(self.claude, "CLAUDE.md"), (self.codex, "AGENTS.md")]:
+            self.assertFalse((client / name).is_symlink())
+            self.assertFalse((client / "skills/example").is_symlink())
+            self.assertFalse((client / ".agent-kit/resources.json").exists())
+        self.assertEqual((self.codex / "skills/other/SKILL.md").read_text(), "# Unmanaged skill\n")
+
+    def test_resource_conflicts_stop_before_preferences_are_written(self):
+        for conflict in ["instructions", "support-file", "foreign-link", "linked-parent"]:
+            with self.subTest(conflict=conflict):
+                if self.claude.exists():
+                    shutil.rmtree(self.claude)
+                self.write(self.claude / "settings.json", '{"theme":"light"}')
+                if conflict == "instructions":
+                    self.write(self.claude / "CLAUDE.md", "<!-- magpie:begin -->\n# Shared instructions\n")
+                elif conflict == "support-file":
+                    shutil.copytree(self.repo / "skills", self.claude / "skills")
+                    self.write(self.claude / "skills/example/scripts/check.sh", "echo local-edit\n")
+                elif conflict == "foreign-link":
+                    self.write(self.root / "magpie/example/SKILL.md", "# Example\n")
+                    (self.claude / "skills").mkdir()
+                    (self.claude / "skills/example").symlink_to(self.root / "magpie/example", target_is_directory=True)
+                else:
+                    (self.claude / "skills").symlink_to(self.repo / "skills", target_is_directory=True)
+                self.run_installer(success=False)
+                self.assertEqual((self.claude / "settings.json").read_text(), '{"theme":"light"}')
+                self.assertFalse((self.claude / ".agent-kit").exists())
+                self.assertFalse(self.codex.exists())
+
+    def test_rollback_preserves_a_manually_replaced_resource(self):
+        self.existing_copies()
+        self.run_installer("claude")
+        (self.claude / "CLAUDE.md").unlink()
+        self.write(self.claude / "CLAUDE.md", "# My later instructions\n")
+        self.run_installer("claude", success=False)
+        self.run_installer("-r", "claude")
+        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# My later instructions\n")
+        self.assertFalse((self.claude / ".agent-kit/resources.json").exists())
+
+    def test_reinstall_after_moving_the_repository_relinks_resources(self):
+        self.run_installer("claude")
+        destination = self.root / "moved repo"
+        self.repo.rename(destination)
+        self.repo = destination
+        self.run_installer("claude")
+        self.assertEqual((self.claude / "CLAUDE.md").resolve(), self.repo / "instructions.md")
+        self.assertEqual((self.claude / "skills/example").resolve(), self.repo / "skills/example")
+        self.run_installer("-r", "claude")
+        self.assertFalse((self.claude / "CLAUDE.md").is_symlink())
+
+    @unittest.skipIf(os.geteuid() == 0, "requires ordinary user filesystem permissions")
+    def test_failed_relink_can_restore_original_copies(self):
+        self.existing_copies()
+        self.run_installer("claude")
+        destination = self.root / "moved repo"
+        self.repo.rename(destination)
+        self.repo = destination
+        (self.claude / "skills").chmod(0o500)
+        try:
+            self.run_installer("claude", success=False)
+        finally:
+            (self.claude / "skills").chmod(0o700)
+        self.run_installer("-r", "claude")
+        self.assertFalse((self.claude / "CLAUDE.md").is_symlink())
+        self.assertFalse((self.claude / "skills/example").is_symlink())
+        self.assertEqual((self.claude / "skills/example/scripts/check.sh").read_text(), "echo example\n")
+
+    def test_duplicate_skill_names_are_rejected_before_writing(self):
+        self.write(self.repo / "vendor/skills/example/SKILL.md", "# Other example\n")
+        self.run_installer(success=False)
+        self.assertFalse(self.claude.exists())
+        self.assertFalse(self.codex.exists())
+
+    def test_gateway_handoff_requires_releasing_native_resources(self):
+        self.run_installer("claude")
+        self.write(self.claude / "settings.json", '{"theme":"light"}')
+        self.run_installer("claude", "--gateway", "magpie", success=False)
+        self.assertEqual((self.claude / "settings.json").read_text(), '{"theme":"light"}')
+        self.assertTrue((self.claude / "CLAUDE.md").is_symlink())
+        self.run_installer("-r", "claude")
+        self.run_installer("claude", "--gateway", "magpie")
+        self.assertFalse((self.claude / "CLAUDE.md").exists())
+        self.assertFalse((self.claude / ".agent-kit/resources.json").exists())
+
+    def test_unsupported_gateway_is_rejected_before_writing(self):
+        self.run_installer("--gateway", "ccswitch", success=False)
+        self.assertFalse(self.claude.exists())
+        self.assertFalse(self.codex.exists())
+
+    def test_default_install_updates_real_preferences_and_preserves_native_logins(self):
+        for client in ["claude", "codex"]:
+            shutil.rmtree(self.repo / client)
+            shutil.copytree(SOURCE / client, self.repo / client)
+        self.existing_copies()
+        self.write(self.claude / "settings.json", '{"model":"opus","theme":"light",'
+                   '"idleCompaction":true,"permissions":{"defaultMode":"default"}}')
+        self.write(self.claude / "plugins/claude-hud/config.json", '{}')
+        self.write(self.codex / "config.toml", 'model_provider = "openai"\nmodel_context_window = 1000000\n'
+                   'cli_auth_credentials_store = "file"\napproval_policy = "on-request"\n')
+        logins = {
+            self.claude / ".credentials.json": '{"claudeAiOauth":{"accessToken":"claude-login"}}',
+            self.codex / "auth.json": '{"auth_mode":"chatgpt","tokens":{"access_token":"codex-login"}}',
+        }
+        for path, text in logins.items():
+            self.write(path, text)
+        self.environment["CODEXMANAGER_API_KEY"] = "not-selected"
+        self.run_installer()
+        settings = self.json(self.claude / "settings.json")
+        patch = self.json(self.repo / "claude/settings.json")
+        for key in ["theme", "idleCompaction", "permissions"]:
+            self.assertEqual(settings[key], patch[key])
+        self.assertEqual(settings["model"], "opus")
+        self.assertNotIn("ANTHROPIC_BASE_URL", settings["env"])
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", settings["env"])
+        self.assertEqual(self.json(self.claude / "plugins/claude-hud/config.json"),
+                         self.json(self.repo / "claude/plugins/claude-hud/config.json"))
+        self.assertEqual(self.toml()["approval_policy"], "never")
+        self.assertEqual(self.toml()["model_provider"], "openai")
+        self.assertEqual(self.toml()["model_context_window"], 1000000)
+        self.assertEqual(self.toml()["cli_auth_credentials_store"], "file")
+        for path, text in logins.items():
+            self.assertEqual(path.read_bytes(), text.encode())
+        for client, name in [(self.claude, "CLAUDE.md"), (self.codex, "AGENTS.md")]:
+            self.assertTrue((client / name).is_symlink())
+            self.assertTrue((client / "skills/example").is_symlink())
+
+
+class CodexManagerTest(ReadyInstallerTest):
+    def run_cm(self, *args, success=True):
+        return self.run_installer("codex", "--gateway", "codexmanager", *args, success=success)
+
+    def native_login(self):
+        self.write(self.codex / "config.toml", 'model = "gpt-6-astra"\nmodel_context_window = 872000\n')
+        text = '{ "auth_mode": "chatgpt", "tokens": { "access_token": "original-login" } }\r\n'
+        path = self.codex / "auth.json"
+        path.write_bytes(text.encode())
+        path.chmod(0o640)
+        return path.read_bytes()
+
+    def test_install_rotation_and_restore_keep_first_native_login(self):
+        original = self.native_login()
+        self.run_cm("--cm-key", "first-key")
+        config = self.toml()
+        self.assertEqual(config["model"], "gpt-6-astra")
+        self.assertEqual(config["model_context_window"], 872000)
+        self.assertEqual(config["model_provider"], "cm")
+        self.assertEqual(config["cli_auth_credentials_store"], "file")
+        self.assertEqual(config["model_providers"]["cm"], {
+            "name": "cm", "base_url": "http://localhost:48760/v1",
+            "wire_api": "responses", "requires_openai_auth": True})
+        self.assertEqual(self.json(self.codex / "auth.json"), {
+            "auth_mode": "apikey", "OPENAI_API_KEY": "first-key"})
+        self.assertEqual((self.codex / "auth.json").stat().st_mode & 0o777, 0o600)
+        state = self.codex / ".agent-kit/gateways/codexmanager.json"
+        self.assertEqual(state.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.codex / "AGENTS.md").resolve(), self.repo / "instructions.md")
+        self.assertTrue((self.codex / "skills/vendor-example").is_symlink())
+        self.assertFalse(self.claude.exists())
+        self.run_cm("--cm-key", "second-key")
+        self.run_cm()  # Reuses the selected CM provider's key.
+        self.assertEqual(self.json(self.codex / "auth.json")["OPENAI_API_KEY"], "second-key")
+        self.run_cm("-r")
+        self.assertEqual((self.codex / "auth.json").read_bytes(), original)
+        self.assertEqual((self.codex / "auth.json").stat().st_mode & 0o777, 0o640)
+        self.assertNotIn("model_provider", self.toml())
+        self.assertEqual(self.toml()["model_context_window"], 872000)
+        self.assertFalse(state.exists())
+        self.assertFalse((self.codex / "AGENTS.md").is_symlink())
+
+    def test_environment_key_and_fresh_install_restore(self):
+        self.environment["CODEXMANAGER_API_KEY"] = "environment-key"
+        self.run_cm()
+        self.assertEqual(self.json(self.codex / "auth.json")["OPENAI_API_KEY"], "environment-key")
+        del self.environment["CODEXMANAGER_API_KEY"]
+        self.run_cm("-r")
+        self.assertFalse((self.codex / "auth.json").exists())
+        self.assertFalse((self.codex / "config.toml").exists())
+
+    def test_missing_key_does_not_replace_a_native_or_official_api_login(self):
+        original = self.native_login()
+        for auth in [original, b'{"auth_mode":"apikey","OPENAI_API_KEY":"official-api-key"}']:
+            (self.codex / "auth.json").write_bytes(auth)
+            self.run_cm(success=False)
+            self.assertEqual((self.codex / "auth.json").read_bytes(), auth)
+            self.assertNotIn("model_provider", self.toml())
+            self.assertFalse((self.codex / ".agent-kit").exists())
+
+    def test_active_profile_and_conflicting_gateway_settings_are_restored(self):
+        original_auth = self.native_login()
+        self.write(self.codex / "config.toml", '''model = "gpt-6-astra"
+model_provider = "magpie"
+profile = "work"
+openai_base_url = "http://127.0.0.1:3425/backend-api/codex"
+model_catalog_json = "/catalog/top.json"
+[model_providers.cm]
+name = "previous cm"
+env_key = "PREVIOUS_KEY"
+[model_providers.other]
+base_url = "https://example.com/v1"
+[profiles.work]
+model_provider = "magpie"
+cli_auth_credentials_store = "keyring"
+model_catalog_json = "/catalog/work.json"
+[profiles.other]
+model_provider = "other"
+''')
+        original_config = self.toml().unwrap()
+        self.run_cm("--cm-key", "profile-key")
+        config = self.toml()
+        self.assertEqual(config["profiles"]["work"]["model_provider"], "cm")
+        self.assertEqual(config["cli_auth_credentials_store"], "file")
+        self.assertNotIn("cli_auth_credentials_store", config["profiles"]["work"])
+        self.assertNotIn("model_catalog_json", config["profiles"]["work"])
+        self.assertNotIn("model_catalog_json", config)
+        self.assertNotIn("openai_base_url", config)
+        self.assertNotIn("env_key", config["model_providers"]["cm"])
+        self.assertEqual(config["profiles"]["other"]["model_provider"], "other")
+        self.run_cm("-r")
+        self.assertEqual(self.toml().unwrap(), original_config)
+        self.assertEqual((self.codex / "auth.json").read_bytes(), original_auth)
+
+    def test_later_login_is_kept_during_restore(self):
+        self.native_login()
+        self.run_cm("--cm-key", "cm-key")
+        replacement = '{"auth_mode":"chatgpt","tokens":{"access_token":"new-login"}}'
+        self.write(self.codex / "auth.json", replacement)
+        self.run_cm("-r")
+        self.assertEqual((self.codex / "auth.json").read_text(), replacement)
+        self.assertFalse((self.codex / ".agent-kit/gateways/codexmanager.json").exists())
+
+    def test_reuse_requires_the_cm_endpoint_and_file_authentication(self):
+        self.write(self.codex / "auth.json", '{"auth_mode":"apikey","OPENAI_API_KEY":"unrelated-key"}')
+        for endpoint, extra in [("https://example.com/v1", ""),
+                                ("http://localhost:48760/v1", 'env_key = "OTHER_KEY"\n')]:
+            self.write(self.codex / "config.toml", 'model_provider = "cm"\ncli_auth_credentials_store = "file"\n'
+                       '[model_providers.cm]\nrequires_openai_auth = true\nbase_url = "' + endpoint + '"\n' + extra)
+            self.run_cm(success=False)
+            self.assertEqual(self.json(self.codex / "auth.json")["OPENAI_API_KEY"], "unrelated-key")
+            self.assertFalse((self.codex / ".agent-kit").exists())
+
+    def test_another_mode_requires_restoring_codexmanager_first(self):
+        self.run_cm("--cm-key", "cm-key")
+        auth = (self.codex / "auth.json").read_bytes()
+        for args in [("codex",), ("codex", "--gateway", "magpie"), ("-r", "codex")]:
+            self.run_installer(*args, success=False)
+            self.assertEqual((self.codex / "auth.json").read_bytes(), auth)
+            self.assertEqual(self.toml()["model_provider"], "cm")
+        self.run_cm("-r")
+        self.run_installer("codex")
+        self.assertFalse((self.codex / "auth.json").exists())
+
+    def test_conflicts_and_wrong_client_do_not_write_credentials(self):
+        self.native_login()
+        self.write(self.codex / "AGENTS.md", "# Local instructions\n")
+        original = (self.codex / "auth.json").read_bytes()
+        result = self.run_cm("--cm-key", "do-not-print-this-key", success=False)
+        self.assertNotIn("do-not-print-this-key", result.stdout + result.stderr)
+        self.assertEqual((self.codex / "auth.json").read_bytes(), original)
+        self.assertFalse((self.codex / ".agent-kit").exists())
+        result = self.run_installer("claude", "--gateway", "codexmanager",
+                                    "--cm-key", "do-not-print-this-key", success=False)
+        self.assertFalse(self.claude.exists())
+        self.assertNotIn("do-not-print-this-key", result.stdout + result.stderr)
+        result = self.run_installer("--gateway", "magpie", "--cm-key", "do-not-print-this-key", success=False)
+        self.assertNotIn("do-not-print-this-key", result.stdout + result.stderr)
+
+    @unittest.skipIf(os.geteuid() == 0, "requires ordinary user filesystem permissions")
+    def test_failed_key_rotation_can_restore_original_login(self):
+        original = self.native_login()
+        self.run_cm("--cm-key", "first-key")
+        self.codex.chmod(0o500)
+        try:
+            self.run_cm("--cm-key", "next-key", success=False)
+        finally:
+            self.codex.chmod(0o700)
+        self.assertEqual(self.json(self.codex / "auth.json")["OPENAI_API_KEY"], "first-key")
+        self.run_cm("-r")
+        self.assertEqual((self.codex / "auth.json").read_bytes(), original)
 
 
 class BootstrapTest(InstallerTest):

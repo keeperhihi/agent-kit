@@ -10,6 +10,7 @@
 !/install.ps1
 !/preferences.py
 !/requirements.txt
+!/gateways/**
 !/claude/**
 !/codex/**
 !/skills/**

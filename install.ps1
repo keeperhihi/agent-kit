@@ -1,6 +1,6 @@
-# Codex preferences only. Compatible with PowerShell 5.1.
+# Codex installation entry point. Compatible with PowerShell 5.1.
 [CmdletBinding()]
-param([switch]$Restore)
+param([switch]$Restore, [string]$Gateway, [string]$CmKey)
 
 $ErrorActionPreference = 'Stop'
 $Python = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
@@ -27,5 +27,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 $Arguments = @((Join-Path $PSScriptRoot 'preferences.py'), 'codex')
 if ($Restore) { $Arguments += '--restore' }
+if ($Gateway) { $Arguments += @('--gateway', $Gateway) }
+if ($PSBoundParameters.ContainsKey('CmKey')) { $Arguments += @('--cm-key', $CmKey) }
 & $Python @Arguments
 if ($LASTEXITCODE -ne 0) { throw "Preferences failed (exit $LASTEXITCODE)." }

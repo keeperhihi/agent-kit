@@ -7,6 +7,7 @@
   "theme": "dark",
   "tui": "fullscreen",
   "disableRemoteControl": true,
+  "idleCompaction": false,
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
   "permissions": {
