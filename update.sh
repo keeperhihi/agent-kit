@@ -6,9 +6,9 @@
 set -eu
 
 usage() {
-  printf 'Usage: %s [--proxy PORT] [claude] [codex]\n' "$0"
+  printf 'Usage: %s --port PORT [claude] [codex]\n' "$0"
   printf 'Install or update Claude Code and Codex (both unless one is named) to the latest version.\n'
-  printf '  --proxy PORT  send every request through http://127.0.0.1:PORT; otherwise connect directly\n'
+  printf '  --port PORT  send every request through the proxy at http://127.0.0.1:PORT (required)\n'
 }
 
 die() {
@@ -21,7 +21,7 @@ die() {
 fetch_ranges() (
   url=$1 output=$2 chunk=4194304
   parts="${XDG_CACHE_HOME:-$HOME/.cache}/agent-kit/downloads/$(printf '%s' "$url" | sed 's/[^A-Za-z0-9._-]/_/g')"
-  total=$(command curl -fsSL --http1.1 --connect-timeout 15 --retry 5 --retry-delay 1 --retry-all-errors \
+  total=$(command curl -q -fsSL --http1.1 --connect-timeout 15 --retry 5 --retry-delay 1 --retry-all-errors \
     -r 0-0 --max-filesize 1 -o /dev/null -D - "$url" |
     awk 'tolower($1) == "content-range:" { split($3, size, "/"); total = size[2] } END { print total + 0 }')
   [ "$total" -gt 0 ] || die "Could not download in ranges: $url"
@@ -44,7 +44,7 @@ fetch_ranges() (
   done
   printf 'Downloading %s (%s MiB, %s/%s ranges cached)\n' \
     "${url##*/}" $(((total + 1048575) / 1048576)) "$cached" "$ranges" >&2
-  [ "$#" -eq 0 ] || command curl --parallel --parallel-max 16 "$@" || :
+  [ "$#" -eq 0 ] || command curl -q --parallel --parallel-max 16 "$@" || :
   start=0
   : > "$output"
   while [ "$start" -lt "$total" ]; do
@@ -64,7 +64,7 @@ sha256() {
 
 update_claude() {
   releases=https://downloads.claude.ai/claude-code-releases
-  version=$(command curl -fsSL --retry 5 --retry-all-errors "$releases/latest")
+  version=$(command curl -q -fsSL --retry 5 --retry-all-errors "$releases/latest")
   case "$version" in
     [0-9]*.[0-9]*.[0-9]*) ;;
     *) die 'Could not read the latest Claude Code version.' ;;
@@ -95,7 +95,7 @@ update_claude() {
     platform=$platform-musl
   fi
 
-  checksum=$(command curl -fsSL --retry 5 --retry-all-errors "$releases/$version/manifest.json" | tr -d ' \n\r\t' |
+  checksum=$(command curl -q -fsSL --retry 5 --retry-all-errors "$releases/$version/manifest.json" | tr -d ' \n\r\t' |
     sed -n "s/.*\"$platform\":{[^{}]*\"checksum\":\"\([0-9a-f]\{64\}\)\".*/\1/p")
   [ -n "$checksum" ] || die "Claude Code $version has no build for $platform."
   binary="$work/claude-$version"
@@ -124,12 +124,12 @@ curl() (
   done
   case "$output:$url" in
     ?*:*.tar.gz | ?*:*.tgz) fetch_ranges "$url" "$output" ;;
-    *) command curl "$@" ;;
+    *) command curl -q "$@" ;;
   esac
 )
 
 update_codex() {
-  command curl -fsSL --retry 5 --retry-all-errors -o "$work/codex-install.sh" https://chatgpt.com/codex/install.sh
+  command curl -q -fsSL --retry 5 --retry-all-errors -o "$work/codex-install.sh" https://chatgpt.com/codex/install.sh
   printf 'Updating Codex\n'
   (
     CODEX_NON_INTERACTIVE=1
@@ -138,16 +138,16 @@ update_codex() {
   )
 }
 
-clients='' proxy=''
+clients='' port=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     claude | codex) clients="$clients $1" ;;
-    --proxy)
+    --port)
       case "${2-}" in
         '' | *[!0-9]*) usage >&2; exit 2 ;;
       esac
       [ "$2" -ge 1 ] && [ "$2" -le 65535 ] || { usage >&2; exit 2; }
-      proxy="http://127.0.0.1:$2"
+      port=$2
       shift
       ;;
     -h | --help) usage; exit 0 ;;
@@ -155,14 +155,13 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-# Without --proxy, connect directly even when proxy variables are set. The variables also
-# reach the official Codex installer and the Claude Code binary.
-if [ -n "$proxy" ]; then
-  export http_proxy="$proxy" https_proxy="$proxy" all_proxy="$proxy" \
-    HTTP_PROXY="$proxy" HTTPS_PROXY="$proxy" ALL_PROXY="$proxy"
-else
-  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
-fi
+[ -n "$port" ] || { printf 'Missing --port PORT.\n' >&2; usage >&2; exit 2; }
+# Send every request through the proxy, including those of the official Codex installer and
+# the Claude Code binary. no_proxy and NO_PROXY could exempt hosts from it, so clear them.
+proxy="http://127.0.0.1:$port"
+export http_proxy="$proxy" https_proxy="$proxy" all_proxy="$proxy" \
+  HTTP_PROXY="$proxy" HTTPS_PROXY="$proxy" ALL_PROXY="$proxy"
+unset no_proxy NO_PROXY
 work=$(mktemp -d "${TMPDIR:-/tmp}/agent-kit-update.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 trap 'exit 130' INT

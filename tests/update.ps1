@@ -5,8 +5,8 @@ $Source = Split-Path -Parent $PSScriptRoot
 $Root = Join-Path ([IO.Path]::GetTempPath()) ('agent-kit update test ' + [IO.Path]::GetRandomFileName())
 $OldLocalAppData = $env:LOCALAPPDATA
 $Core = $PSVersionTable.PSVersion.Major -ge 6
-$OldProxies = @([Net.WebRequest]::DefaultWebProxy, $env:HTTPS_PROXY)
-if ($Core) { $OldProxies += [Net.Http.HttpClient]::DefaultProxy }
+$OldProxies = @{ WebRequest = [Net.WebRequest]::DefaultWebProxy; HTTPS_PROXY = $env:HTTPS_PROXY; NO_PROXY = $env:NO_PROXY }
+if ($Core) { $OldProxies.HttpClient = [Net.Http.HttpClient]::DefaultProxy }
 $Server = $null
 $Checks = 0
 function Assert([bool]$Condition, [string]$Message) {
@@ -88,56 +88,51 @@ Invoke-WebRequest -UseBasicParsing -Uri '$Base/host/codex-package-test.tar.gz' -
     Assert ((Get-Hash (Join-Path $Root 'package.tar.gz')) -eq (Get-Hash $Package)) 'downloads the Codex package despite its time limit'
     Assert ((Get-RangeCount '/host/codex-package-test.tar.gz') -ge 2) 'downloads the Codex package in ranges'
 
+    function Get-Requests { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) }
     $Script = Join-Path $Source 'update.ps1'
     $Parameter = ''
-    try { & $Script -Proxy 65536 } catch { $Parameter = $_.Exception.ParameterName }
-    Assert ($Parameter -eq 'Proxy') 'rejects -Proxy 65536'
+    try { & $Script -Port 65536 } catch { $Parameter = $_.Exception.ParameterName }
+    Assert ($Parameter -eq 'Port') 'rejects -Port 65536'
     $Parameter = ''
     try { & $Script nope } catch { $Parameter = $_.Exception.ParameterName }
     Assert ($Parameter -eq 'Clients') 'binds other arguments to the clients'
+    $Message = ''
+    Set-Content -LiteralPath $Log -Value ''
+    try { & $Script claude } catch { $Message = $_.Exception.Message }
+    Assert ($Message -like 'Missing -Port*' -and -not (Get-Requests)) 'stops before any request without -Port'
 
-    # Run the script body with a stand-in for Claude Code that records the proxy variable for
-    # child processes and makes requests through both WebRequest and the web cmdlets.
+    # Run the script body with a stand-in for Claude Code that records the variables child
+    # processes get and makes requests through both WebRequest and the web cmdlets. The system
+    # proxy and variables point elsewhere or exempt every host, and the requested host does not
+    # resolve, so requests only succeed through -Port: the release server.
     $Main = [scriptblock]::Create((@($Ast.EndBlock.Statements | Where-Object {
         $_ -isnot [Management.Automation.Language.FunctionDefinitionAst] } | ForEach-Object { $_.Extent.Text }) -join "`n"))
     function Update-Claude {
-        $script:ChildProxy = $env:HTTPS_PROXY
-        Save-Ranges "$Target/host/blob" (Join-Path $Root 'claude')
-        $null = Invoke-RestMethod -Uri "$Target/host/latest"
+        $script:Child = @($env:HTTPS_PROXY, $env:NO_PROXY)
+        Save-Ranges 'http://agent-kit.invalid/host/blob' (Join-Path $Root 'claude')
+        $null = Invoke-RestMethod -Uri 'http://agent-kit.invalid/host/latest'
     }
-    function Get-Requests { @(Get-Content -LiteralPath $Log | Where-Object { $_ }) }
-    $Clients = @('claude')
-
-    # The host does not resolve, so requests only succeed through -Proxy: the release server.
-    $Before = [Net.WebRequest]::DefaultWebProxy
-    $Proxy = [int](Get-Content -LiteralPath $PortFile)
-    $Target = 'http://agent-kit.invalid'
-    Set-Content -LiteralPath $Log -Value ''
-    & $Main
-    Assert ((Get-Hash (Join-Path $Root 'claude')) -eq (Get-Hash $Blob)) 'downloads through -Proxy'
-    Assert (-not (Get-Requests | Where-Object { $_ -notlike '* via proxy' })) 'sends every request through -Proxy'
-    Assert ($ChildProxy -eq "http://127.0.0.1:$Proxy") 'hands -Proxy to child processes'
-    Assert ([Net.WebRequest]::DefaultWebProxy -eq $Before) 'restores the default proxy'
-
-    # Without -Proxy, requests go directly even when the system proxy and variable are unreachable.
     $Unreachable = New-Object Net.WebProxy 'http://127.0.0.1:9'
     [Net.WebRequest]::DefaultWebProxy = $Unreachable
     if ($Core) { [Net.Http.HttpClient]::DefaultProxy = $Unreachable }
     $env:HTTPS_PROXY = 'http://127.0.0.1:9'
-    $Proxy = 0
-    $Target = $Base
+    $env:NO_PROXY = '*'
+    $Clients = @('claude')
+    $Port = [int](Get-Content -LiteralPath $PortFile)
     Set-Content -LiteralPath $Log -Value ''
     & $Main
-    Assert ((Get-Requests).Count -ge 3 -and -not (Get-Requests | Where-Object { $_ -like '* via proxy' })) 'connects directly without -Proxy'
-    Assert (-not $ChildProxy) 'clears the proxy variable for child processes'
-    Assert ([Net.WebRequest]::DefaultWebProxy -eq $Unreachable -and $env:HTTPS_PROXY -eq 'http://127.0.0.1:9') 'restores the system proxy and variable'
+    Assert ((Get-Hash (Join-Path $Root 'claude')) -eq (Get-Hash $Blob)) 'downloads through -Port'
+    Assert ((Get-Requests).Count -ge 3 -and -not (Get-Requests | Where-Object { $_ -notlike '* via proxy' })) 'sends every request through -Port'
+    Assert ($Child[0] -eq "http://127.0.0.1:$Port" -and -not $Child[1]) 'hands the proxy to child processes without NO_PROXY'
+    Assert ([Net.WebRequest]::DefaultWebProxy -eq $Unreachable -and $env:HTTPS_PROXY -eq 'http://127.0.0.1:9' -and $env:NO_PROXY -eq '*') 'restores the system proxy and variables'
     if ($Core) { Assert ([Net.Http.HttpClient]::DefaultProxy -eq $Unreachable) 'restores the HttpClient proxy' }
     Write-Host "PASS: $Checks checks through update.ps1"
 } finally {
     if ($Server) { Stop-Process -Id $Server.Id -Force -ErrorAction SilentlyContinue }
     $env:LOCALAPPDATA = $OldLocalAppData
-    [Net.WebRequest]::DefaultWebProxy = $OldProxies[0]
-    $env:HTTPS_PROXY = $OldProxies[1]
-    if ($Core) { [Net.Http.HttpClient]::DefaultProxy = $OldProxies[2] }
+    [Net.WebRequest]::DefaultWebProxy = $OldProxies.WebRequest
+    $env:HTTPS_PROXY = $OldProxies.HTTPS_PROXY
+    $env:NO_PROXY = $OldProxies.NO_PROXY
+    if ($Core) { [Net.Http.HttpClient]::DefaultProxy = $OldProxies.HttpClient }
     if (Test-Path -LiteralPath $Root) { Remove-Item -LiteralPath $Root -Recurse -Force }
 }

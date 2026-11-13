@@ -41,14 +41,23 @@ done
 exec "$(command -v curl)" "\$@"
 SH
 chmod +x "$root/bin/curl"
-export HOME="$root/home" XDG_CACHE_HOME="$root/cache" TMPDIR="$root/tmp" PATH="$root/bin:$PATH"
-unset CLAUDE_CONFIG_DIR CODEX_HOME http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy NO_PROXY
-update() { "$repo/update.sh" "$@" > "$root/output" 2>&1; }
+export HOME="$root/home" CURL_HOME="$root/home" XDG_CACHE_HOME="$root/cache" TMPDIR="$root/tmp" PATH="$root/bin:$PATH"
+# Default curl configuration must not bypass the explicitly selected proxy.
+printf '%s\n' 'noproxy = "*"' > "$HOME/.curlrc"
+unset CLAUDE_CONFIG_DIR CODEX_HOME
+# Proxy variables that point elsewhere or exempt every host. update.sh has to override them,
+# so that every request reaches the release server as a proxy request.
+unreachable=http://127.0.0.1:9
+export http_proxy=$unreachable https_proxy=$unreachable all_proxy=$unreachable \
+  HTTP_PROXY=$unreachable HTTPS_PROXY=$unreachable ALL_PROXY=$unreachable no_proxy='*' NO_PROXY='*'
+run() { "$repo/update.sh" "$@" > "$root/output" 2>&1; }
+update() { run --port "$port" "$@"; }
 # Usage errors exit with 2, before any request.
-rejects() { update "$@"; test "$?" -eq 2; }
+rejects() { run "$@"; test "$?" -eq 2; }
 requests() { : > "$www/requests.log"; }
+proxied() { test -s "$www/requests.log" && ! grep -q -v ' via proxy$' "$www/requests.log"; }
 # Count range requests for one Claude Code version, leaving out the size probe.
-fetched() { grep "^/downloads.claude.ai/claude-code-releases/$1/" "$www/requests.log" | grep -c -v -e ' -$' -e ' bytes=0-0$' || :; }
+fetched() { grep "^/downloads.claude.ai/claude-code-releases/$1/" "$www/requests.log" | grep -c -v -E ' (-|bytes=0-0) via proxy$' || :; }
 installed() { test "$("$HOME/.local/bin/claude" --version)" = "$1 (Claude Code)"; }
 platforms='darwin-arm64 darwin-x64 linux-arm64 linux-x64 linux-arm64-musl linux-x64-musl'
 binary=claude
@@ -86,6 +95,7 @@ publish_claude 9.9.9 valid
 requests
 check 'updates Claude Code' update claude
 check 'installs the latest Claude Code' installed 9.9.9
+check 'sends every Claude Code request through the proxy' proxied
 check 'downloads Claude Code in ranges' test "$(fetched 9.9.9)" -ge 2
 check 'removes finished ranges' test -z "$(ls -A "$root/cache/agent-kit/downloads")"
 check 'removes the work directory' test -z "$(ls -A "$root/tmp")"
@@ -138,27 +148,12 @@ SH
 requests
 check 'runs the Codex installer' update codex
 check 'installs the Codex package' cmp -s "$HOME/.codex/bin/codex" "$root/package/bin/codex"
+check 'sends every Codex request through the proxy' proxied
 check 'downloads the Codex package in ranges' test "$(grep -c 'codex-package-test.tar.gz bytes=[1-9]' "$www/requests.log")" -ge 1
 
-# --proxy sends every request through the release server, which also serves as a proxy.
-publish_claude 9.9.12 valid
 requests
-check 'updates through --proxy' update --proxy "$port"
-check 'installs through the proxy' installed 9.9.12
-check 'sends every request through the proxy' test -z "$(grep -v ' via proxy$' "$www/requests.log")"
-
-# Without --proxy, requests go directly even when proxy variables point elsewhere.
-publish_claude 9.9.13 valid
-requests
-unreachable=http://127.0.0.1:9
-export http_proxy=$unreachable https_proxy=$unreachable all_proxy=$unreachable \
-  HTTP_PROXY=$unreachable HTTPS_PROXY=$unreachable ALL_PROXY=$unreachable
-check 'ignores proxy variables without --proxy' update
-unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
-check 'installs without a proxy' installed 9.9.13
-check 'sends no request through a proxy' test -z "$(grep ' via proxy$' "$www/requests.log")"
-
-for arguments in nope --proxy '--proxy 7897x' '--proxy 0' '--proxy 65536'; do
-  check "rejects $arguments" rejects $arguments
+for arguments in '' claude --port '--port 7897x' '--port 0' '--port 65536' "--port $port nope"; do
+  check "rejects ${arguments:-no arguments}" rejects $arguments
 done
+check 'starts no update when rejected' test ! -s "$www/requests.log"
 printf 'PASS: %s checks through update.sh\n' "$checks"

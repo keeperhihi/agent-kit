@@ -4,13 +4,15 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidateRange(1, 65535)]
-    [int]$Proxy,
+    [int]$Port,
     [Parameter(ValueFromRemainingArguments = $true)]
     [ValidateSet('claude', 'codex')]
     [string[]]$Clients = @('claude', 'codex')
 )
 
 $ErrorActionPreference = 'Stop'
+# Checked here rather than as a mandatory parameter, which would prompt for it instead.
+if (-not $Port) { throw 'Missing -Port PORT: every request goes through the proxy at http://127.0.0.1:PORT.' }
 
 # Download $Uri to $OutFile in 4 MiB ranges over up to 16 connections. Finished ranges stay
 # in the cache until $OutFile is assembled, so running again resumes the download.
@@ -149,19 +151,21 @@ function Update-Codex {
     try { & $Installer -Release latest } finally { $env:CODEX_NON_INTERACTIVE = $Interactive }
 }
 
-# Send every request through -Proxy, or directly without it even when a system proxy or proxy
-# variable is set; the variables also reach claude.exe. These settings belong to the whole
-# PowerShell process, which may be an open session, so they are restored afterwards.
-$ProxyUri = if ($Proxy) { "http://127.0.0.1:$Proxy" } else { $null }
-$WebProxy = if ($Proxy) { New-Object Net.WebProxy $ProxyUri } else { New-Object Net.WebProxy }
-$ProxyVariables = 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY'
+# Send every request through the proxy, even when a system proxy or proxy variable says
+# otherwise. The variables also reach claude.exe; NO_PROXY could exempt hosts from the proxy,
+# so it is cleared, and as Windows ignores the case of variable names, so is no_proxy. These
+# settings belong to the whole PowerShell process, which may be an open session, so they are
+# restored afterwards.
+$ProxyUri = "http://127.0.0.1:$Port"
+$WebProxy = New-Object Net.WebProxy $ProxyUri
+$ProxyVariables = @{ HTTP_PROXY = $ProxyUri; HTTPS_PROXY = $ProxyUri; ALL_PROXY = $ProxyUri; NO_PROXY = $null }
 $Saved = @{ WebRequest = [Net.WebRequest]::DefaultWebProxy }
 # PowerShell 7 web cmdlets use HttpClient instead of WebRequest. Save both before changing
 # the variables, which the first read of either default can pick up.
 if ($PSVersionTable.PSVersion.Major -ge 6) { $Saved.HttpClient = [Net.Http.HttpClient]::DefaultProxy }
-foreach ($Name in $ProxyVariables) {
+foreach ($Name in $ProxyVariables.Keys) {
     $Saved[$Name] = [Environment]::GetEnvironmentVariable($Name)
-    [Environment]::SetEnvironmentVariable($Name, $ProxyUri)
+    [Environment]::SetEnvironmentVariable($Name, $ProxyVariables[$Name])
 }
 [Net.WebRequest]::DefaultWebProxy = $WebProxy
 if ($Saved.Contains('HttpClient')) { [Net.Http.HttpClient]::DefaultProxy = $WebProxy }
@@ -173,7 +177,7 @@ try {
     }
 } finally {
     Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue
-    foreach ($Name in $ProxyVariables) { [Environment]::SetEnvironmentVariable($Name, $Saved[$Name]) }
+    foreach ($Name in $ProxyVariables.Keys) { [Environment]::SetEnvironmentVariable($Name, $Saved[$Name]) }
     [Net.WebRequest]::DefaultWebProxy = $Saved.WebRequest
     if ($Saved.Contains('HttpClient')) { [Net.Http.HttpClient]::DefaultProxy = $Saved.HttpClient }
 }

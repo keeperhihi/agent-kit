@@ -153,17 +153,17 @@ claude plugin install claude-hud@claude-hud
 中断后再运行，只补下缺少的分片。
 
 ```sh
-./update.sh
-./update.sh codex
-./update.sh --proxy 7897
+./update.sh --port 7897
+./update.sh --port 7897 codex
 ```
 
-不指定客户端则两个都处理。`--proxy 7897` 让所有请求经过 `http://127.0.0.1:7897`；
-不传则直连，环境变量里的代理也不使用。Windows 用 `-Proxy`，不传时同样不走系统代理：
+`--port` 必须指定，填本机代理端口：所有请求都经过 `http://127.0.0.1:端口`，没传就报错，
+不开始更新。环境变量里的代理设置会被它覆盖，`no_proxy`、`NO_PROXY` 也会清空，避免有请求绕过代理。
+不指定客户端则两个都处理。Windows 使用 `-Port`，同样不走系统代理：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 claude -Proxy 7897
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 -Port 7897
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 -Port 7897 claude
 ```
 
 - Claude Code：已是最新版本时不下载。下载后按官方 manifest 校验 SHA-256，再交给该版本的
