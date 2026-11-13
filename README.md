@@ -11,6 +11,7 @@
 | Claude Code 偏好与 HUD | `claude/` | 按字段合并 |
 | Codex 偏好 | `codex/config.toml` | 按字段合并 |
 | 终端、Git、npm、SSH 等 | dotfiles 仓库 | dotfiles 安装器 |
+| Claude Code、Codex 本体的安装和更新 | `update.sh`、`update.ps1` | 按需手动运行 |
 
 仓库是指令与 skills 的持续来源，安装后保留仓库目录。账号和密钥由客户端或所选网关
 管理，不提交进 Git。默认安装沿用客户端现有的登录和请求接入设置；
@@ -144,6 +145,36 @@ claude plugin install claude-hud@claude-hud
 已有插件可继续使用。显示配置在 `claude/plugins/claude-hud/config.json`；
 `/claude-hud:configure` 修改本机副本，需要长期保留的偏好应同步回仓库。
 
+## 安装和更新 Claude Code、Codex
+
+`update.sh` 通过官方安装器把原生版 Claude Code 和 Codex 更新到最新版本，尚未安装的直接装上最新版。
+它只接管其中的大文件下载：按 4 MiB 分片、最多 16 路并发，单个分片失败会自动重试，
+不受官方下载时限（Codex 安装器 5 分钟、`claude update` 10 分钟）的影响。
+中断后再运行，只补下缺少的分片。
+
+```sh
+./update.sh
+./update.sh codex
+./update.sh --proxy 7897
+```
+
+不指定客户端则两个都处理。`--proxy 7897` 让所有请求经过 `http://127.0.0.1:7897`；
+不传则直连，环境变量里的代理也不使用。Windows 用 `-Proxy`，不传时同样不走系统代理：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update.ps1 claude -Proxy 7897
+```
+
+- Claude Code：已是最新版本时不下载。下载后按官方 manifest 校验 SHA-256，再交给该版本的
+  `claude install` 完成安装，安装命令直接使用这份文件，不会重复下载。macOS/Linux 装有 zstd 时
+  改下载压缩版，体积约为三分之一。
+- Codex：以非交互方式运行官方 `install.sh` 或 `install.ps1`，由它解析版本、校验和安装。
+- macOS/Linux 首次安装时，若 `~/.local/bin` 不在 PATH 中，Codex 安装器会把它写入 shell
+  配置文件，Claude Code 只提示添加方法。
+- macOS/Linux 需要 curl 7.71 或以上。下载中的分片保存在 `~/.cache/agent-kit/downloads/`
+  （Windows 为 `%LOCALAPPDATA%\agent-kit\downloads\`），文件拼好后删除。
+
 ## 开发与验证
 
 `install.sh` 保持 Bash 3.2 兼容，`install.ps1` 保持 ASCII 与 Windows PowerShell 5.1
@@ -165,6 +196,17 @@ Windows 的 `tests/install.ps1` 验证 Magpie 模式下的偏好安装和回滚�
 测试使用临时仓库和配置目录，不读取本机凭据、不调用网关。
 环境准备测试使用临时下载的 wheel，之后离线验证创建、补齐依赖和重装。
 真实配置的应用与回滚按用户要求执行。
+
+`update.sh` 使用 POSIX sh，因为它要在同一个 shell 中加载官方 Codex 安装器；
+`update.ps1` 同样保持 ASCII 与 Windows PowerShell 5.1 兼容，其中的下载函数也在
+Codex 安装器的 `Set-StrictMode -Version Latest` 下运行。
+
+```sh
+bash tests/update.sh
+```
+
+Windows 的 `tests/update.ps1` 验证分片下载、续传、对 Codex 安装包下载的接管和代理设置。
+两个更新测试都使用本地服务器 `tests/range_server.py`，它同时充当代理；测试不联网、不安装客户端。
 
 `.gitignore` 使用白名单，新增顶层文件需显式放行。
 skill 调用策略同时维护 `SKILL.md` 和 `agents/openai.yaml`；

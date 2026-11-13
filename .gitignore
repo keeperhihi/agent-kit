@@ -8,6 +8,8 @@
 !/instructions.md
 !/install.sh
 !/install.ps1
+!/update.sh
+!/update.ps1
 !/preferences.py
 !/requirements.txt
 !/gateways/**
