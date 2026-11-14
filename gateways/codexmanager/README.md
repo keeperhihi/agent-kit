@@ -25,13 +25,14 @@
 `cm` 提供方在同一网关地址下、使用文件认证的 API key。不会将其他提供方的密钥
 或 ChatGPT 登录令牌当作网关 key。没有可用 key 时，在修改客户端文件前停止。
 
-Windows 使用：
+Windows 上先以管理员身份启动 PowerShell（开启了开发者模式时普通身份也可以），
+在仓库根目录运行：
 
 ```powershell
-.\install.ps1 -Gateway codexmanager -CmKey '你的网关 key'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Gateway codexmanager -CmKey '你的网关 key'
 ```
 
-也可使用同名环境变量。此模式会安装资源链接，Windows 需要创建符号链接的权限。
+此模式会创建指令和技能的符号链接，所以需要管理员身份。也可以先设置同名环境变量，再省略 `-CmKey`。
 
 ## 接管范围
 
@@ -55,7 +56,13 @@ Claude 的登录和 API 接入方式保持原状；只指定 `claude` 时会提�
 ./install.sh -r codex --gateway codexmanager
 ```
 
-Windows 对应 `install.ps1 -Restore -Gateway codexmanager`。回滚不需要提供 key。
+Windows 上运行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Restore -Gateway codexmanager
+```
+
+回滚不需要提供 key。
 
 接入字段的原值由共用配置记录保存；首次接管前的 `auth.json` 内容和文件权限保存在
 `~/.codex/.agent-kit/gateways/codexmanager.json`，在 macOS/Linux 上该记录和新认证文件均以 `600` 权限写入。

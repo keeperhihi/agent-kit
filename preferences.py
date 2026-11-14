@@ -465,8 +465,8 @@ def main():
             for client in clients:
                 state = read_document(directories[client] / RESOURCE_STATE, "json")
                 if state.get("links"):
-                    raise ValueError("restore agent-kit resources before handing them to the gateway: "
-                                     + str(directories[client]))
+                    raise ValueError(str(directories[client]) + " has instructions and skills from the default install;"
+                                     " restore it first (install.sh -r, or install.ps1 -Restore, without a gateway)")
     overrides, gateway_plan = ({}, None) if adapter is None else adapter.prepare(
         args, clients, directories, read_document)
     # Prepare every configuration, resource and credential change before writing.

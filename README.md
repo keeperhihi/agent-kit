@@ -75,13 +75,30 @@ Claude 偏好包含 `idleCompaction: false`。仓库中的权限偏好允许全�
 
 ### Windows
 
-Windows 只处理 Codex，使用同一套 Python 实现：
+Windows 只处理 Codex，使用同一套 Python 实现。安装器要为指令和技能创建符号链接，
+Windows 默认只允许管理员创建，所以先以管理员身份启动 PowerShell，进入仓库目录再运行；
+开启了 Windows 开发者模式的话，普通身份也可以。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-默认创建指令和技能的符号链接，需要 Windows 开发者模式或相应权限。
+使用网关时加上 `-Gateway`，CodexManager 的网关 key 用 `-CmKey` 传入：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Gateway magpie
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Gateway codexmanager -CmKey '你的网关 key'
+```
+
+同一台机器只用其中一种方式。已经按默认方式装过、要改用网关时，先不带 `-Gateway` 运行一次
+`-Restore`，再运行网关命令。
+
+回滚加上 `-Restore`；网关模式同时传入安装时用的 `-Gateway`：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Restore
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Restore -Gateway codexmanager
+```
 
 ## 使用网关
 
@@ -91,7 +108,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ./install.sh codex --gateway codexmanager --cm-key '你的网关 key'
 ```
 
-也接受 `-gateway`。PowerShell 使用 `-Gateway`，CodexManager 的密钥参数为 `-CmKey`。
+也接受 `-gateway`。Windows 的命令见上面的 [Windows](#windows) 一节。
 
 | 网关 | 接入设置 | 指令和技能 |
 | --- | --- | --- |
@@ -123,7 +140,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ./install.sh -r codex --gateway codexmanager
 ```
 
-Windows 使用 `-Restore`；网关模式同时传入对应的 `-Gateway`。
+Windows 的回滚命令见 [Windows](#windows) 一节。
 
 `.agent-kit/preferences.json` 保存受管字段第一次接管前的值和上次应用值。
 这包括选中网关时由其接管的配置字段。
