@@ -310,6 +310,30 @@ class ResourcesTest(ReadyInstallerTest):
         self.assertEqual((self.claude / ".agent-kit/managed").read_text(), "CLAUDE.md\nskills/example\n")
         self.assertFalse((self.claude / ".agent-kit/resource-backups").exists())
 
+    def test_firecrawl_skills_follow_the_firecrawl_command(self):
+        self.write(self.repo / "vendor/skills/firecrawl-example/SKILL.md", "# Firecrawl example\n")
+        tools = self.root / "tools"
+        # A search path without any real firecrawl command, plus a directory for a stand-in.
+        path = [str(tools), str(Path(sys.executable).parent),
+                *(entry for entry in os.environ["PATH"].split(os.pathsep) if not (Path(entry) / "firecrawl").exists())]
+        self.environment["PATH"] = os.pathsep.join(path)
+        result = self.run_installer()
+        for client in [self.claude, self.codex]:
+            self.assertFalse((client / "skills/firecrawl-example").exists())
+            self.assertTrue((client / "skills/vendor-example").is_symlink())
+        self.assertIn("Skipped firecrawl-example: the firecrawl command was not found.", result.stdout)
+        self.assertIn("npx -y firecrawl-cli@", result.stdout)
+        self.write(tools / "firecrawl", "#!/bin/sh\n")
+        (tools / "firecrawl").chmod(0o755)
+        result = self.run_installer()
+        for client in [self.claude, self.codex]:
+            self.assertEqual((client / "skills/firecrawl-example").resolve(), self.repo / "vendor/skills/firecrawl-example")
+        self.assertNotIn("firecrawl-cli", result.stdout)
+        (tools / "firecrawl").unlink()
+        self.run_installer()
+        for client in [self.claude, self.codex]:
+            self.assertFalse((client / "skills/firecrawl-example").exists())
+
     def test_new_resources_and_removed_skills_with_separate_preference_restore(self):
         self.write(self.codex / "skills/other/SKILL.md", "# Unmanaged skill\n")
         self.run_installer()

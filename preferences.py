@@ -29,6 +29,8 @@ INSTRUCTIONS = {"claude": "CLAUDE.md", "codex": "AGENTS.md"}
 # Entries a client maintains in its own skills directory, besides hidden ones such as Codex's
 # bundled .system: Claude Code keeps the skills synced from the account in skills/synced.
 CLIENT_SKILLS = {"claude": {"synced"}, "codex": set()}
+# Firecrawl's skills drive its CLI, so they are linked only where the firecrawl command exists.
+FIRECRAWL_SETUP = "npx -y firecrawl-cli@1.19.27 init -y --browser --skip-skills"
 MISSING = object()
 
 
@@ -277,29 +279,32 @@ def apply(prepared, restore):
     print(("Restored " if restore else "Applied ") + client + " preferences")
 
 
-def resource_sources(client):
-    instructions = REPO / "instructions.md"
-    if not instructions.is_file():
-        raise ValueError("missing instructions: " + str(instructions))
-    sources = {INSTRUCTIONS[client]: instructions}
+def repository_skills():
+    skills = {}
     for folder in [REPO / "skills", REPO / "vendor/skills"]:
         if not folder.is_dir():
             continue
         for skill in sorted(folder.iterdir()):
             if skill.name.startswith(".") or not (skill / "SKILL.md").is_file():
                 continue
-            relative = "skills/" + skill.name
-            if relative in sources:
+            if skill.name in skills:
                 raise ValueError("duplicate skill name: " + skill.name)
-            sources[relative] = skill
-    return sources
+            skills[skill.name] = skill
+    return skills
+
+
+def resource_sources(client, skills):
+    instructions = REPO / "instructions.md"
+    if not instructions.is_file():
+        raise ValueError("missing instructions: " + str(instructions))
+    return {INSTRUCTIONS[client]: instructions, **{"skills/" + name: path for name, path in skills.items()}}
 
 
 def resource_link(path, entry):
     return path.is_symlink() and os.readlink(path) in [entry["source"], *entry.get("previous", [])]
 
 
-def plan_resources(client, directory, restore):
+def plan_resources(client, directory, restore, skills):
     state_path = directory / RESOURCE_STATE
     state = read_document(state_path, "json")
     if state and state.get("version") != 1:
@@ -307,7 +312,7 @@ def plan_resources(client, directory, restore):
     if restore and not state:
         return None
     records = copy.deepcopy(state.get("links", {}))
-    desired = {} if restore else resource_sources(client)
+    desired = {} if restore else resource_sources(client, skills)
     for relative in records:
         parts = relative.split("/")
         if relative != INSTRUCTIONS[client] and not (
@@ -466,7 +471,14 @@ def main():
         args, clients, directories, read_document)
     # Prepare every configuration, resource and credential change before writing.
     prepared = [plan(client, directories[client], args.restore, overrides.get(client)) for client in clients]
-    resources = ([plan_resources(client, directories[client], args.restore) for client in clients]
+    skills, skipped = {}, []
+    if link_resources and not args.restore:
+        skills = repository_skills()
+        if not shutil.which("firecrawl"):
+            skipped = [name for name in skills if name == "firecrawl" or name.startswith("firecrawl-")]
+        for name in skipped:
+            del skills[name]
+    resources = ([plan_resources(client, directories[client], args.restore, skills) for client in clients]
                  if link_resources else [])
     if args.restore and not any([*prepared, *resources, gateway_plan]):
         raise ValueError("no installation record; old whole-file backups are not restored")
@@ -485,6 +497,10 @@ def main():
         if not link_resources:
             print("  Instructions and skills are managed by the gateway.")
         print("  Setup: " + str(gateway_dir / "README.md"))
+    if skipped:
+        print("Skipped " + ", ".join(skipped) + ": the firecrawl command was not found.")
+        print("To add them, install the Firecrawl CLI and log in (needs Node.js), then run the installer again:")
+        print("  " + FIRECRAWL_SETUP)
 
 
 if __name__ == "__main__":

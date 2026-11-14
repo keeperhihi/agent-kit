@@ -61,6 +61,10 @@ Claude 偏好包含 `idleCompaction: false`。仓库中的权限偏好允许全�
 客户端的 `skills` 目录只保留仓库的技能。客户端自己维护的条目不动：以点开头的隐藏条目
 （例如 Codex 自带的 `.system`），以及 Claude Code 存放账号同步技能的 `synced`。
 
+名为 `firecrawl` 或以 `firecrawl-` 开头的技能依赖 Firecrawl CLI，只在 PATH 上有 `firecrawl`
+命令时安装。没有这个命令时，安装器跳过它们，并给出安装 CLI 并登录的命令（需要 Node.js），
+装好后再运行一次安装即可；已经装上的，之后在没有这个命令时重装也会撤下。
+
 第一次接管时，指令文件和 `skills` 目录里已有的文件、目录或链接原样移入
 `<客户端目录>/.agent-kit/resource-backups/`：仓库提供的换成链接，其余的从 `skills` 目录移走。
 每个路径只在第一次接管时备份，之后重装时，这些路径上的其他内容会被直接替换。
@@ -212,4 +216,5 @@ Windows 的 `tests/update.ps1` 验证分片下载、续传、对 Codex 安装包
 
 `.gitignore` 使用白名单，新增顶层文件需显式放行。
 skill 调用策略同时维护 `SKILL.md` 和 `agents/openai.yaml`；
-更新 `vendor/skills/firecrawl` 时保留固定 CLI 版本和 `--skip-skills` 等本地修改。
+更新 `vendor/skills/firecrawl` 时保留固定 CLI 版本和 `--skip-skills` 等本地修改；
+CLI 版本变化时同步 `preferences.py` 里的 `FIRECRAWL_SETUP`。
