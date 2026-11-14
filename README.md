@@ -58,13 +58,16 @@ Claude 偏好包含 `idleCompaction: false`。仓库中的权限偏好允许全�
 - Claude Code 的 `CLAUDE.md`、Codex 的 `AGENTS.md` → 仓库 `instructions.md`
 - 客户端 `skills/<名称>` → 仓库 `skills/<名称>` 或 `vendor/skills/<名称>`
 
-首次接管时，客户端里已有的同名文件、技能目录或链接会原样移入
-`<客户端目录>/.agent-kit/resource-backups/`，再换成链接，回滚时放回原处。
+客户端的 `skills` 目录只保留仓库的技能。客户端自己维护的条目不动：以点开头的隐藏条目
+（例如 Codex 自带的 `.system`），以及 Claude Code 存放账号同步技能的 `synced`。
+
+第一次接管时，指令文件和 `skills` 目录里已有的文件、目录或链接原样移入
+`<客户端目录>/.agent-kit/resource-backups/`：仓库提供的换成链接，其余的从 `skills` 目录移走。
+每个路径只在第一次接管时备份，之后重装时，这些路径上的其他内容会被直接替换。
 重复的技能名称会让安装在写入客户端配置前停止。
 
 编辑仓库内已有资源后，客户端通过链接读取新内容。新增、删除技能或移动仓库后，
-重新运行安装命令来更新链接。仓库删除的资源会交还接管前的副本；
-接管前不存在的则撤下链接。
+重新运行安装命令来更新链接。仓库删除的技能会被撤下，接管前的原件留在备份里。
 
 ### Windows
 
@@ -123,8 +126,8 @@ Windows 使用 `-Restore`；网关模式同时传入对应的 `-Gateway`。
 回滚只恢复仍等于上次应用值的字段；用户或客户端之后修改的值保留。
 仓库删除一个偏好字段或补丁文件后，重装也按此规则交还该字段。
 
-`.agent-kit/resources.json` 记录直接分发的资源。回滚恢复接管前的副本或链接，
-用户后来替换过的目标保留；完成后清理资源记录和对应备份。
+`.agent-kit/resources.json` 记录直接分发的资源。回滚把备份放回原处，包括从 `skills` 目录
+移走的技能；用户后来替换过的目标保留。完成后清理资源记录和对应备份。
 
 旧版本的 `.agent-kit/managed`、`.agent-kit/original/`、`.agent-kit-state`
 和 `.agent-kit-backups` 不用于新安装器回滚，也不会被自动清理。

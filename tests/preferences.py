@@ -314,6 +314,7 @@ class ResourcesTest(ReadyInstallerTest):
         self.write(self.codex / "skills/other/SKILL.md", "# Unmanaged skill\n")
         self.run_installer()
         self.assertEqual((self.codex / "AGENTS.md").resolve(), self.repo / "instructions.md")
+        self.assertFalse((self.codex / "skills/other").exists())
         shutil.rmtree(self.repo / "vendor/skills/vendor-example")
         self.run_installer()
         for client in [self.claude, self.codex]:
@@ -383,15 +384,48 @@ class ResourcesTest(ReadyInstallerTest):
         self.run_installer("-r", "claude")
         self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# My instructions\n")
 
-    def test_rollback_preserves_a_manually_replaced_resource(self):
-        self.existing_copies()
+    def test_reinstall_replaces_later_changes_and_rollback_keeps_them(self):
+        self.write(self.claude / "CLAUDE.md", "# First instructions\n")
         self.run_installer("claude")
         (self.claude / "CLAUDE.md").unlink()
-        self.write(self.claude / "CLAUDE.md", "# My later instructions\n")
-        self.run_installer("claude", success=False)
+        self.write(self.claude / "CLAUDE.md", "# Later instructions\n")
+        self.write(self.claude / "skills/example/SKILL.md", "# Later example\n")
+        self.run_installer("claude")
+        self.assertEqual((self.claude / "CLAUDE.md").resolve(), self.repo / "instructions.md")
+        self.assertEqual((self.claude / "skills/example").resolve(), self.repo / "skills/example")
+        self.assertEqual((self.claude / ".agent-kit/resource-backups/CLAUDE.md").read_text(), "# First instructions\n")
+        (self.claude / "CLAUDE.md").unlink()
+        self.write(self.claude / "CLAUDE.md", "# Last instructions\n")
         self.run_installer("-r", "claude")
-        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# My later instructions\n")
+        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# Last instructions\n")
         self.assertFalse((self.claude / ".agent-kit/resources.json").exists())
+
+    def test_skills_directories_hold_only_repository_skills(self):
+        client_owned = [(self.claude, "skills/synced/account/docx/SKILL.md", "# Synced\n"),
+                        (self.codex, "skills/.system/imagegen/SKILL.md", "# Bundled\n"),
+                        (self.codex, "skills/.DS_Store", "finder\n")]
+        for directory, relative, content in client_owned:
+            self.write(directory / relative, content)
+        self.write(self.codex / "skills/mine/SKILL.md", "# Mine\n")
+        self.write(self.codex / "skills/vendor-example/SKILL.md", "# Old vendor copy\n")
+        (self.codex / "skills/dangling").symlink_to(self.root / "moved/away", target_is_directory=True)
+        names = lambda directory: sorted(path.name for path in (directory / "skills").iterdir())
+        self.run_installer()
+        self.assertEqual(names(self.codex), [".DS_Store", ".system", "example", "vendor-example"])
+        self.assertEqual(names(self.claude), ["example", "synced", "vendor-example"])
+        # A skill the repository drops is unlinked; its original waits in the backup for a restore.
+        shutil.rmtree(self.repo / "vendor/skills/vendor-example")
+        self.run_installer()
+        self.assertEqual(names(self.codex), [".DS_Store", ".system", "example"])
+        self.run_installer("-r")
+        self.assertEqual((self.codex / "skills/mine/SKILL.md").read_text(), "# Mine\n")
+        self.assertEqual((self.codex / "skills/vendor-example/SKILL.md").read_text(), "# Old vendor copy\n")
+        self.assertEqual(os.readlink(self.codex / "skills/dangling"), str(self.root / "moved/away"))
+        for directory, relative, content in client_owned:
+            self.assertEqual((directory / relative).read_text(), content)
+        for directory in [self.claude, self.codex]:
+            self.assertFalse((directory / ".agent-kit/resources.json").exists())
+            self.assertFalse((directory / ".agent-kit/resource-backups").exists())
 
     def test_reinstall_after_moving_the_repository_relinks_resources(self):
         self.run_installer("claude")

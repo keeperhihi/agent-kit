@@ -26,6 +26,9 @@ STATE = Path(".agent-kit/preferences.json")
 RESOURCE_STATE = Path(".agent-kit/resources.json")
 RESOURCE_BACKUPS = Path(".agent-kit/resource-backups")
 INSTRUCTIONS = {"claude": "CLAUDE.md", "codex": "AGENTS.md"}
+# Entries a client maintains in its own skills directory, besides hidden ones such as Codex's
+# bundled .system: Claude Code keeps the skills synced from the account in skills/synced.
+CLIENT_SKILLS = {"claude": {"synced"}, "codex": set()}
 MISSING = object()
 
 
@@ -312,26 +315,28 @@ def plan_resources(client, directory, restore):
                 and "\\" not in parts[1]):
             raise ValueError("unexpected resource in record: " + str(state_path))
 
-    for relative in dict.fromkeys([*records, *desired]):
+    # The skills directory keeps only the repository's skills and what the client maintains itself.
+    others = []
+    skills = directory / "skills"
+    if not restore and skills.is_dir() and not skills.is_symlink():
+        others = ["skills/" + entry.name for entry in sorted(skills.iterdir())
+                  if not entry.name.startswith(".") and entry.name not in CLIENT_SKILLS[client]]
+
+    for relative in dict.fromkeys([*records, *desired, *others]):
         target = directory / relative
         saved = directory / RESOURCE_BACKUPS / relative
         regular_parents(target)
         regular_parents(saved)
         old = records.get(relative)
         source = desired.get(relative)
-        exists = target.exists() or target.is_symlink()
         if old is None:
             if saved.exists() or saved.is_symlink():
                 raise ValueError("resource backup already exists: " + str(saved))
             # Whatever is there, a copy, local edits or a link elsewhere, moves to the backup as it is.
-            old = {"source": str(source), "original": exists}
-            records[relative] = old
-        elif source is not None and exists and not resource_link(target, old):
-            # Resume an interrupted first install before the original was moved.
-            if not (old["original"] and not saved.exists() and not saved.is_symlink()):
-                raise ValueError("resource was replaced; keep or merge it first: " + str(target))
+            old = records[relative] = {"source": None, "original": target.exists() or target.is_symlink()}
         if source is not None and old["source"] != str(source):
-            old.setdefault("previous", []).append(old["source"])
+            if old["source"] is not None:
+                old.setdefault("previous", []).append(old["source"])
             old["source"] = str(source)
     return client, directory, records, desired
 
@@ -355,8 +360,9 @@ def apply_resources(prepared, restore):
         target = directory / relative
         saved = backups / relative
         source = desired.get(relative)
-        if source is None:
-            if resource_link(target, entry):
+        ours = resource_link(target, entry)
+        if restore:
+            if ours:
                 target.unlink()
             # A file or link the user put there afterwards stays in place.
             if not target.exists() and not target.is_symlink() and (saved.exists() or saved.is_symlink()):
@@ -365,20 +371,37 @@ def apply_resources(prepared, restore):
             else:
                 discard_resource(saved)
             del records[relative]
-        else:
+            print("  " + str(target))
+            continue
+        note = None
+        if (target.exists() or target.is_symlink()) and not ours:
             if entry["original"] and not saved.exists() and not saved.is_symlink():
+                # The first takeover, or one interrupted before the original moved.
                 saved.parent.mkdir(parents=True, exist_ok=True)
                 target.rename(saved)
-            if target.is_symlink() and os.readlink(target) == str(source):
-                continue
-            if (target.exists() or target.is_symlink()) and not resource_link(target, entry):
-                raise ValueError("resource changed during installation: " + str(target))
+                note = " (moved to backup)"
+            else:
+                # Only the first original is kept; whatever took its place since then goes.
+                discard_resource(target)
+                note = " (removed)"
+        if source is None:
+            if ours:
+                target.unlink()
+                note = " (removed)"
+            # The original, if any, stays in the backup until a restore.
+            if entry["original"]:
+                records[relative] = {"source": None, "original": True}
+            else:
+                del records[relative]
+        elif not (target.is_symlink() and os.readlink(target) == str(source)):
             target.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix=".agent-kit.", dir=target.parent) as temporary:
                 link = Path(temporary) / "link"
                 link.symlink_to(source, target_is_directory=source.is_dir())
                 os.replace(link, target)
-        print("  " + str(target))
+            note = ""
+        if note is not None:
+            print("  " + str(target) + note)
     if records:
         for entry in records.values():
             entry.pop("previous", None)
