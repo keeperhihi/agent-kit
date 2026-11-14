@@ -1,61 +1,24 @@
-# Magpie 适配
-
-在仓库根目录选择此适配：
+# Magpie
 
 ```sh
 ./install.sh --gateway magpie
 ```
 
-安装器应用共用的客户端偏好，指令和技能的来源关联、启用及分发交给 Magpie。
-它不安装 Magpie 软件、不修改 Magpie 的账号或资源库配置。Magpie 本体由用户安装，
-新机器按下面的步骤接管；已有接管关系继续使用。
-
-Magpie 启用相应功能后维护的内容包括：
-
-- `~/.config/magpie/` 中的账号、供应商、路由和资源库配置。
-- 客户端的网关接入设置，以及 Codex 的模型目录文件。
-- 客户端指令文件里的 Magpie 区块、技能目录中的分发链接。
-- Antigravity 接入时的 `magpie agy` Shell 区块。
-
-这些内容由 Magpie 自己生成和更新。dotfiles 会保留它的 Shell 区块。
-
-## 账号和模型
-
-在 Magpie 中登录账号、设置供应商和路由，并启用需要接入的客户端。
-要沿用长上下文偏好，可在对应供应商的「高级 → 上下文窗口」选择「各模型最大」。
-也可以用 Magpie 自己的备份功能迁移设置；需要保留登录信息时明确选择包含登录。
-
-## 共享指令
-
-1. 资源库 → 指令 → 新建一套，命名为 `agent-kit`。
-2. 在点「添加」之前，选择「保存在一个文件里…」，填写本机仓库中 `instructions.md`
-   的完整路径，例如 `/Users/jin/Workspace/agent-kit/instructions.md`。
-3. 点击「添加」，确认已读取文件内容，并将这套指令设为使用中。
-4. 开启需要使用它的客户端开关。
-
-以后主要编辑仓库文件。通过 Magpie 编辑关联指令也会写回仓库，应检查 Git diff 后再提交。
-新机器的仓库路径不同时，重新关联本地路径。
-
-Magpie 会保留客户端指令文件中原有的内容。从旧安装方式接管时，先检查这些内容是否
-与共享指令重复；失效的旧链接也需先处理。共享指令来源应是仓库文件，
-不要设成 Magpie 正要写入的客户端指令文件。
-
-## 技能
-
-资源库 → 技能，在来源输入框分别填写仓库的 `skills/` 和 `vendor/skills/` 的完整路径，
-点击「查找技能」，选择需要的技能和客户端。
-
-如果「Agent 中已有」已经发现同一份技能，可以直接导入，核对来源仍指向本仓库。
-本地来源的源文件留在仓库；Magpie 资源库链接到它，再链接给启用的客户端。
-
-## MCP
-
-在资源库 → MCP 服务器中添加或导入需要的条目，再分配给客户端。
-例如 OpenAI 文档 MCP：
-
-```text
-名称：openaiDeveloperDocs
-URL：https://developers.openai.com/mcp
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Gateway magpie
 ```
 
-新开客户端会话验证指令、技能和实际请求接入方式。
+和默认安装一样装上偏好、指令和 skills，不额外写配置。Magpie 本身需要另外安装；它写进客户端配置的接入地址
+和登录，安装器不会动。
+
+## 在 Magpie 里
+
+- **账号和模型：** 登录账号，设置供应商和路由，启用要接入的客户端。要沿用长上下文偏好，在对应供应商的
+  「高级 → 上下文窗口」选「各模型最大」。
+- **指令和 skills：** 安装器已经装好。Magpie 识别到它们后会询问是否交给它管理，按需确认。之后仍在仓库里改；
+  再运行一次安装，这些位置会恢复成仓库的状态。链接模式下，如果 Magpie 往 `CLAUDE.md`、`AGENTS.md` 里写了内容，
+  会写进仓库的 `instructions.md`，确认后用 `git status` 看一眼。
+- **MCP：** 在「资源库 → MCP 服务器」里添加，再分配给客户端。例如 OpenAI 文档 MCP：名称 `openaiDeveloperDocs`，
+  URL `https://developers.openai.com/mcp`。
+
+装完新开一个客户端会话，确认指令、skills 和请求实际走的是 Magpie。

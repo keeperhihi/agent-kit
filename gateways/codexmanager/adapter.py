@@ -15,23 +15,22 @@ def add_arguments(parser):
                         help="CodexManager key; otherwise use CODEXMANAGER_API_KEY or the existing CM login")
 
 
-def prepare(args, clients, directories, read_document):
-    if "codex" not in clients:
-        raise ValueError("CodexManager requires the codex client")
-    if args.restore and args.cm_key is not None:
-        raise ValueError("--cm-key cannot be used with --restore")
-    directory = directories["codex"]
-    auth_path = directory / "auth.json"
-    state_path = directory / STATE
+def read_record(state_path, read_document):
     record = read_document(state_path, "json")
     if record and record.get("version") != 1:
         raise ValueError("unsupported CodexManager login record: " + str(state_path))
-    if args.restore and not record:
-        return {}, None
-    current = read_document(auth_path, "json")
-    if args.restore:
-        return {}, (state_path, auth_path, record, current, True)
+    return record
 
+
+def prepare(args, clients, directories, read_document):
+    """Plan the provider fields and the API-key login for an install with CodexManager."""
+    if "codex" not in clients:
+        raise ValueError("CodexManager requires the codex client")
+    directory = directories["codex"]
+    auth_path = directory / "auth.json"
+    state_path = directory / STATE
+    record = read_record(state_path, read_document)
+    current = read_document(auth_path, "json")
     config = read_document(directory / "config.toml", "toml")
     template = read_document(Path(__file__).with_name("codex.toml"), "toml")
     profile = config.get("profile")
@@ -75,6 +74,13 @@ def prepare(args, clients, directories, read_document):
                     ["model_catalog_json", "openai_base_url", "cli_auth_credentials_store"]]
     overrides = {"codex": {"config.toml": {"set": fields, "remove": removed}}}
     return overrides, (state_path, auth_path, record, current, False)
+
+
+def release(directory, read_document):
+    """Plan putting back the login CodexManager replaced, for a restore or another installation mode."""
+    state_path = directory / STATE
+    return state_path, directory / "auth.json", read_record(state_path, read_document), \
+        read_document(directory / "auth.json", "json"), True
 
 
 def apply(prepared, atomic_write):

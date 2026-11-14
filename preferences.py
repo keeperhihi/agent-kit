@@ -3,6 +3,7 @@
 
 import argparse
 import copy
+import filecmp
 import importlib.util
 import json
 import os
@@ -304,7 +305,33 @@ def resource_link(path, entry):
     return path.is_symlink() and os.readlink(path) in [entry["source"], *entry.get("previous", [])]
 
 
-def plan_resources(client, directory, restore, skills):
+def same_tree(left, right):
+    if left.is_symlink() or right.is_symlink():
+        return left.is_symlink() and right.is_symlink() and os.readlink(left) == os.readlink(right)
+    if left.is_dir() and right.is_dir():
+        names = {path.name for path in left.iterdir()}
+        return names == {path.name for path in right.iterdir()} and all(
+            same_tree(left / name, right / name) for name in names)
+    return left.is_file() and right.is_file() and filecmp.cmp(left, right, shallow=False)
+
+
+def place_resource(target, source, copied):
+    """Put a link to source, or a copy of it, where target is, setting aside what is there."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".agent-kit.", dir=target.parent) as temporary:
+        staged = Path(temporary) / "new"
+        if not copied:
+            staged.symlink_to(source, target_is_directory=source.is_dir())
+        elif source.is_dir():
+            shutil.copytree(source, staged, symlinks=True)
+        else:
+            shutil.copy2(source, staged)
+        if target.exists() or target.is_symlink():
+            target.rename(Path(temporary) / "old")
+        staged.rename(target)
+
+
+def plan_resources(client, directory, restore, skills, copied):
     state_path = directory / RESOURCE_STATE
     state = read_document(state_path, "json")
     if state and state.get("version") != 1:
@@ -343,7 +370,9 @@ def plan_resources(client, directory, restore, skills):
             if old["source"] is not None:
                 old.setdefault("previous", []).append(old["source"])
             old["source"] = str(source)
-    return client, directory, records, desired
+        if copied and source is not None:
+            old["copied"] = True
+    return client, directory, records, desired, copied
 
 
 def discard_resource(path):
@@ -354,21 +383,23 @@ def discard_resource(path):
 
 
 def apply_resources(prepared, restore):
-    client, directory, records, desired = prepared
+    client, directory, records, desired, copied = prepared
     state_path = directory / RESOURCE_STATE
     backups = directory / RESOURCE_BACKUPS
-    # Keep ownership and the original's presence before moving any live path.
-    # Previous link destinations let rollback recover an interrupted relink.
+    # Keep ownership and the original's presence before moving any live path. Previous link
+    # destinations and the copy marker let rollback recover an interrupted relink or switch.
     if not restore:
         atomic_write(state_path, dump({"version": 1, "links": records}, "json"))
     for relative, entry in list(records.items()):
         target = directory / relative
         saved = backups / relative
         source = desired.get(relative)
-        ours = resource_link(target, entry)
+        present = target.exists() or target.is_symlink()
+        # A copy cannot be told apart from later edits, so whatever sits on a copied path is ours.
+        ours = present if entry.get("copied") else resource_link(target, entry)
         if restore:
             if ours:
-                target.unlink()
+                discard_resource(target)
             # A file or link the user put there afterwards stays in place.
             if not target.exists() and not target.is_symlink() and (saved.exists() or saved.is_symlink()):
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -379,44 +410,56 @@ def apply_resources(prepared, restore):
             print("  " + str(target))
             continue
         note = None
-        if (target.exists() or target.is_symlink()) and not ours:
-            if entry["original"] and not saved.exists() and not saved.is_symlink():
-                # The first takeover, or one interrupted before the original moved.
-                saved.parent.mkdir(parents=True, exist_ok=True)
-                target.rename(saved)
-                note = " (moved to backup)"
-            else:
-                # Only the first original is kept; whatever took its place since then goes.
-                discard_resource(target)
-                note = " (removed)"
+        if present and entry["original"] and not saved.exists() and not saved.is_symlink():
+            # The first takeover, or one interrupted before the original moved.
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            target.rename(saved)
+            note = " (moved to backup)"
+        elif present and not ours:
+            # Only the first original is kept; whatever took its place since then goes.
+            discard_resource(target)
+            note = " (removed)"
         if source is None:
-            if ours:
-                target.unlink()
+            if note is None and ours:
+                discard_resource(target)
                 note = " (removed)"
             # The original, if any, stays in the backup until a restore.
             if entry["original"]:
                 records[relative] = {"source": None, "original": True}
             else:
                 del records[relative]
-        elif not (target.is_symlink() and os.readlink(target) == str(source)):
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix=".agent-kit.", dir=target.parent) as temporary:
-                link = Path(temporary) / "link"
-                link.symlink_to(source, target_is_directory=source.is_dir())
-                os.replace(link, target)
-            note = ""
+        else:
+            if copied:
+                current = not target.is_symlink() and same_tree(target, source)
+            else:
+                current = target.is_symlink() and os.readlink(target) == str(source)
+            if not current:
+                place_resource(target, source, copied)
+                note = ""
         if note is not None:
             print("  " + str(target) + note)
     if records:
         for entry in records.values():
             entry.pop("previous", None)
+            if not (copied and entry["source"] is not None):
+                entry.pop("copied", None)
         atomic_write(state_path, dump({"version": 1, "links": records}, "json"))
     else:
         state_path.unlink(missing_ok=True)
     for path in [backups / "skills", backups, state_path.parent]:
         if path.is_dir() and not any(path.iterdir()):
             path.rmdir()
-    print(("Restored " if restore else "Linked ") + client + " resources")
+    print(("Restored " if restore else "Copied " if copied else "Linked ") + client + " resources")
+
+
+def load_adapter(name):
+    path = REPO / "gateways" / name / "adapter.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("agent_kit_gateway_" + name, path)
+    adapter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(adapter)
+    return adapter
 
 
 def main():
@@ -424,19 +467,17 @@ def main():
     gateways = sorted(path.parent.name for path in (REPO / "gateways").glob("*/gateway.json"))
     selection = argparse.ArgumentParser(add_help=False)
     selection.add_argument("--gateway", "-gateway", choices=gateways,
-                           help="use this gateway's integration; default installs resources directly")
+                           help="also apply this gateway's settings")
     selected, _ = selection.parse_known_args()
     parser = argparse.ArgumentParser(description=__doc__, parents=[selection])
     parser.add_argument("clients", nargs="*", metavar="{claude,codex}")
-    parser.add_argument("-r", "--restore", action="store_true")
-    adapter = None
-    if selected.gateway:
-        adapter_path = REPO / "gateways" / selected.gateway / "adapter.py"
-        if adapter_path.is_file():
-            spec = importlib.util.spec_from_file_location("agent_kit_gateway", adapter_path)
-            adapter = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(adapter)
-            adapter.add_arguments(parser)
+    parser.add_argument("-r", "--restore", action="store_true",
+                        help="put everything back as it was before the first install")
+    parser.add_argument("--copy", action="store_true",
+                        help="copy instructions and skills instead of linking them, so the repository can be removed")
+    adapter = load_adapter(selected.gateway) if selected.gateway else None
+    if adapter is not None:
+        adapter.add_arguments(parser)
     args, unknown = parser.parse_known_args()
     if unknown:
         # Unknown gateway options may carry credentials; do not echo values.
@@ -448,54 +489,48 @@ def main():
         "claude": Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").resolve(),
         "codex": Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").resolve(),
     }
+    # A gateway records what it wrote outside the preference fields, such as a replaced login.
+    # Restoring, or installing without that gateway, puts those back.
+    releases = []
     for client in clients:
-        for state in (directories[client] / ".agent-kit/gateways").glob("*.json"):
+        for state in sorted((directories[client] / ".agent-kit/gateways").glob("*.json")):
             regular(state)
-            if state.stem != args.gateway:
-                raise ValueError("restore gateway " + state.stem + " before selecting another installation mode")
-    gateway = None
-    link_resources = True
-    if args.gateway:
-        gateway_dir = REPO / "gateways" / args.gateway
-        gateway = read_document(gateway_dir / "gateway.json", "json")
-        if gateway.get("resources") not in ["native", "gateway"]:
-            raise ValueError("unknown resource ownership in " + str(gateway_dir / "gateway.json"))
-        link_resources = gateway["resources"] == "native"
-        if not link_resources and not args.restore:
-            for client in clients:
-                state = read_document(directories[client] / RESOURCE_STATE, "json")
-                if state.get("links"):
-                    raise ValueError(str(directories[client]) + " has instructions and skills from the default install;"
-                                     " restore it first (install.sh -r, or install.ps1 -Restore, without a gateway)")
-    overrides, gateway_plan = ({}, None) if adapter is None else adapter.prepare(
+            if args.restore or state.stem != args.gateway:
+                owner = load_adapter(state.stem)
+                if owner is None:
+                    raise ValueError("no gateway adapter for " + str(state))
+                releases.append((owner, owner.release(directories[client], read_document)))
+    overrides, gateway_plan = ({}, None) if adapter is None or args.restore else adapter.prepare(
         args, clients, directories, read_document)
     # Prepare every configuration, resource and credential change before writing.
     prepared = [plan(client, directories[client], args.restore, overrides.get(client)) for client in clients]
     skills, skipped = {}, []
-    if link_resources and not args.restore:
+    if not args.restore:
         skills = repository_skills()
         if not shutil.which("firecrawl"):
             skipped = [name for name in skills if name == "firecrawl" or name.startswith("firecrawl-")]
         for name in skipped:
             del skills[name]
-    resources = ([plan_resources(client, directories[client], args.restore, skills) for client in clients]
-                 if link_resources else [])
-    if args.restore and not any([*prepared, *resources, gateway_plan]):
+    resources = [plan_resources(client, directories[client], args.restore, skills, args.copy) for client in clients]
+    if args.restore and not any([*prepared, *resources, *releases]):
         raise ValueError("no installation record; old whole-file backups are not restored")
-    if gateway_plan is not None and not args.restore:
-        adapter.apply(gateway_plan, atomic_write)
+    if not args.restore:
+        for owner, item in releases:
+            owner.apply(item, atomic_write)
+        if gateway_plan is not None:
+            adapter.apply(gateway_plan, atomic_write)
     for item in prepared:
         if item is not None:
             apply(item, args.restore)
     for item in resources:
         if item is not None:
             apply_resources(item, args.restore)
-    if gateway_plan is not None and args.restore:
-        adapter.apply(gateway_plan, atomic_write)
-    if gateway is not None and not args.restore:
-        print("Gateway integration: " + gateway["name"])
-        if not link_resources:
-            print("  Instructions and skills are managed by the gateway.")
+    if args.restore:
+        for owner, item in releases:
+            owner.apply(item, atomic_write)
+    if args.gateway and not args.restore:
+        gateway_dir = REPO / "gateways" / args.gateway
+        print("Gateway integration: " + read_document(gateway_dir / "gateway.json", "json")["name"])
         print("  Setup: " + str(gateway_dir / "README.md"))
     if skipped:
         print("Skipped " + ", ".join(skipped) + ": the firecrawl command was not found.")

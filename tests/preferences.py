@@ -91,21 +91,22 @@ foreign_option = true
 [projects."/a/project"]
 trust_level = "trusted"
 ''')
-        self.untouched = {}
-        for directory, relative, text in [
-            (self.codex, "auth.json", '{"auth_mode":"chatgpt","tokens":{"access_token":"test-token"}}'),
-            (self.codex, "AGENTS.md", "# User instructions\n"),
-            (self.claude, "CLAUDE.md", "# Other instructions\n"),
-            (self.codex, "skills/example/SKILL.md", "# Existing skill\n"),
-            (self.claude, ".credentials.json", '{"token":"test-credential"}'),
-            (self.codex, "sessions/existing.jsonl", '{"session":"existing"}\n'),
+        self.untouched, self.originals = {}, {}
+        for files, directory, relative, text in [
+            (self.untouched, self.codex, "auth.json", '{"auth_mode":"chatgpt","tokens":{"access_token":"test-token"}}'),
+            (self.untouched, self.claude, ".credentials.json", '{"token":"test-credential"}'),
+            (self.untouched, self.codex, "sessions/existing.jsonl", '{"session":"existing"}\n'),
+            (self.originals, self.codex, "AGENTS.md", "# User instructions\n"),
+            (self.originals, self.claude, "CLAUDE.md", "# Other instructions\n"),
+            (self.originals, self.codex, "skills/example/SKILL.md", "# Existing skill\n"),
         ]:
             path = directory / relative
             self.write(path, text)
-            self.untouched[path] = path.read_bytes()
+            files[path] = path.read_bytes()
 
-    def assert_untouched(self):
-        for path, content in self.untouched.items():
+    def assert_untouched(self, restored=False):
+        """Logins and sessions are never touched; taken-over originals are back after a restore."""
+        for path, content in [*self.untouched.items(), *(self.originals.items() if restored else [])]:
             self.assertEqual(path.read_bytes(), content, str(path))
 
     def test_apply_reapply_and_restore_preserve_magpie(self):
@@ -129,22 +130,27 @@ trust_level = "trusted"
         self.run_installer()
         self.assertEqual(self.toml()["model"], "deepseek/deepseek-flash")
         self.assert_untouched()
+        for directory, name in [(self.claude, "CLAUDE.md"), (self.codex, "AGENTS.md")]:
+            self.assertEqual((directory / name).resolve(), self.repo / "instructions.md")
+        self.assertEqual((self.codex / "skills/example").resolve(), self.repo / "skills/example")
         self.run_installer("-r")
         self.assertEqual(self.toml()["model"], "deepseek/deepseek-flash")
         self.assertEqual(self.toml()["approval_policy"], "on-request")
         self.assertEqual(self.toml()["desktop"]["appearanceTheme"], "dark")
         self.assertEqual(self.json(self.claude / "settings.json")["theme"], "light")
-        self.assert_untouched()
+        self.assert_untouched(restored=True)
         self.assertFalse((self.codex / ".agent-kit/preferences.json").exists())
 
-    def test_fresh_install_creates_only_preferences(self):
+    def test_fresh_install_and_restore(self):
         self.run_installer()
-        for directory in [self.claude, self.codex]:
-            for relative in ["AGENTS.md", "CLAUDE.md", "skills", "auth.json"]:
-                self.assertFalse((directory / relative).exists())
+        for directory, name in [(self.claude, "CLAUDE.md"), (self.codex, "AGENTS.md")]:
+            self.assertEqual((directory / name).resolve(), self.repo / "instructions.md")
+            self.assertTrue((directory / "skills/example").is_symlink())
+        self.assertFalse((self.codex / "auth.json").exists())
         self.run_installer("-r")
-        self.assertFalse((self.claude / "settings.json").exists())
-        self.assertFalse((self.codex / "config.toml").exists())
+        for directory in [self.claude, self.codex]:
+            for relative in ["settings.json", "config.toml", "CLAUDE.md", "AGENTS.md", "skills/example"]:
+                self.assertFalse((directory / relative).exists())
         self.run_installer("-r", success=False)
 
     def test_restore_keeps_later_edits_and_new_siblings(self):
@@ -192,7 +198,7 @@ trust_level = "trusted"
         self.run_installer("-r")
         self.assertEqual(self.toml()["approval_policy"], "on-request")
         self.assertEqual(self.toml()["desktop"]["appearanceTheme"], "dark")
-        self.assert_untouched()
+        self.assert_untouched(restored=True)
 
     def test_invalid_live_config_prevents_all_selected_writes(self):
         self.existing()
@@ -210,7 +216,7 @@ trust_level = "trusted"
         self.assertEqual((self.claude / "settings.json").read_bytes(), before)
         self.assertFalse(self.codex.exists())
 
-    def test_old_state_and_dangling_instruction_links_are_left_for_handoff(self):
+    def test_old_installer_state_and_dangling_links_survive_install_and_restore(self):
         self.existing()
         old = self.codex / ".agent-kit/original/config.toml"
         self.write(old, 'model_provider = "cm"')
@@ -252,7 +258,7 @@ trust_level = "trusted"
         self.assertEqual(self.toml()["model"], "codex/gpt-6-astra")
         self.assert_untouched()
         self.run_installer("-r")
-        self.assert_untouched()
+        self.assert_untouched(restored=True)
 
     def test_default_install_backs_up_existing_resources(self):
         self.existing()
@@ -262,13 +268,12 @@ trust_level = "trusted"
                                             (self.codex, "skills/example", "skills/example")]:
             self.assertEqual((directory / relative).resolve(), self.repo / source)
         super().run_installer("-r")
-        self.assert_untouched()
+        self.assert_untouched(restored=True)
 
     def test_single_dash_gateway_option_is_accepted(self):
         super().run_installer("-gateway", "magpie", "claude")
         self.assertEqual(self.json(self.claude / "settings.json")["theme"], "dark")
-        self.assertFalse((self.claude / "CLAUDE.md").exists())
-        self.assertFalse((self.claude / "skills").exists())
+        self.assertEqual((self.claude / "CLAUDE.md").resolve(), self.repo / "instructions.md")
 
 
 class ResourcesTest(ReadyInstallerTest):
@@ -334,7 +339,59 @@ class ResourcesTest(ReadyInstallerTest):
         for client in [self.claude, self.codex]:
             self.assertFalse((client / "skills/firecrawl-example").exists())
 
-    def test_new_resources_and_removed_skills_with_separate_preference_restore(self):
+    def test_copies_work_without_the_repository_and_restore_from_a_clone(self):
+        self.write(self.claude / "CLAUDE.md", "# My instructions\n")
+        self.write(self.claude / "skills/mine/SKILL.md", "# Mine\n")
+        result = self.run_installer("claude", "--copy")
+        self.assertIn("Copied claude resources", result.stdout)
+        for relative, source in [("CLAUDE.md", "instructions.md"), ("skills/example", "skills/example"),
+                                 ("skills/vendor-example", "vendor/skills/vendor-example")]:
+            self.assertFalse((self.claude / relative).is_symlink())
+            self.assertTrue((self.claude / relative).exists())
+        self.assertFalse((self.claude / "skills/mine").exists())
+        clone = self.root / "clone"
+        shutil.copytree(self.repo, clone, symlinks=True)
+        shutil.rmtree(self.repo)
+        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# Shared instructions\n")
+        self.assertEqual((self.claude / "skills/example/scripts/check.sh").read_text(), "echo example\n")
+        self.repo = clone
+        self.run_installer("-r", "claude")
+        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# My instructions\n")
+        self.assertEqual((self.claude / "skills/mine/SKILL.md").read_text(), "# Mine\n")
+        self.assertFalse((self.claude / "skills/example").exists())
+        self.assertFalse((self.claude / ".agent-kit/resources.json").exists())
+
+    def test_copies_refresh_and_switch_with_links(self):
+        self.run_installer("claude", "--copy")
+        self.write(self.repo / "skills/example/SKILL.md", "# Updated example\n")
+        self.write(self.claude / "CLAUDE.md", "# Edited copy\n")
+        result = self.run_installer("claude", "--copy")
+        self.assertEqual((self.claude / "skills/example/SKILL.md").read_text(), "# Updated example\n")
+        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# Shared instructions\n")
+        self.assertNotIn("vendor-example", result.stdout)
+        self.run_installer("claude")
+        for relative, source in [("CLAUDE.md", "instructions.md"), ("skills/example", "skills/example")]:
+            self.assertEqual((self.claude / relative).resolve(), self.repo / source)
+        self.assertNotIn("copied", (self.claude / ".agent-kit/resources.json").read_text())
+        self.run_installer("claude", "--copy")
+        self.assertFalse((self.claude / "skills/example").is_symlink())
+        self.assertEqual((self.claude / "skills/example/SKILL.md").read_text(), "# Updated example\n")
+
+    @unittest.skipIf(os.geteuid() == 0, "requires ordinary user filesystem permissions")
+    def test_interrupted_switch_from_copies_still_restores_originals(self):
+        self.write(self.claude / "skills/example/SKILL.md", "# My example\n")
+        self.run_installer("claude", "--copy")
+        (self.claude / "skills").chmod(0o500)
+        try:
+            self.run_installer("claude", success=False)
+        finally:
+            (self.claude / "skills").chmod(0o700)
+        self.run_installer("-r", "claude")
+        self.assertEqual((self.claude / "skills/example/SKILL.md").read_text(), "# My example\n")
+        self.assertFalse((self.claude / "skills/vendor-example").exists())
+        self.assertFalse((self.claude / "CLAUDE.md").exists())
+
+    def test_new_resources_and_removed_skills(self):
         self.write(self.codex / "skills/other/SKILL.md", "# Unmanaged skill\n")
         self.run_installer()
         self.assertEqual((self.codex / "AGENTS.md").resolve(), self.repo / "instructions.md")
@@ -343,8 +400,6 @@ class ResourcesTest(ReadyInstallerTest):
         self.run_installer()
         for client in [self.claude, self.codex]:
             self.assertFalse((client / "skills/vendor-example").is_symlink())
-        self.run_installer("-r", "--gateway", "magpie")
-        self.assertTrue((self.codex / "AGENTS.md").is_symlink())
         self.run_installer("-r")
         for client, name in [(self.claude, "CLAUDE.md"), (self.codex, "AGENTS.md")]:
             self.assertFalse((client / name).is_symlink())
@@ -484,17 +539,6 @@ class ResourcesTest(ReadyInstallerTest):
         self.run_installer(success=False)
         self.assertFalse(self.claude.exists())
         self.assertFalse(self.codex.exists())
-
-    def test_gateway_handoff_requires_releasing_native_resources(self):
-        self.run_installer("claude")
-        self.write(self.claude / "settings.json", '{"theme":"light"}')
-        self.run_installer("claude", "--gateway", "magpie", success=False)
-        self.assertEqual((self.claude / "settings.json").read_text(), '{"theme":"light"}')
-        self.assertTrue((self.claude / "CLAUDE.md").is_symlink())
-        self.run_installer("-r", "claude")
-        self.run_installer("claude", "--gateway", "magpie")
-        self.assertFalse((self.claude / "CLAUDE.md").exists())
-        self.assertFalse((self.claude / ".agent-kit/resources.json").exists())
 
     def test_unsupported_gateway_is_rejected_before_writing(self):
         self.run_installer("--gateway", "ccswitch", success=False)
@@ -652,16 +696,29 @@ model_provider = "other"
             self.assertEqual(self.json(self.codex / "auth.json")["OPENAI_API_KEY"], "unrelated-key")
             self.assertFalse((self.codex / ".agent-kit").exists())
 
-    def test_another_mode_requires_restoring_codexmanager_first(self):
-        self.run_cm("--cm-key", "cm-key")
-        auth = (self.codex / "auth.json").read_bytes()
-        for args in [("codex",), ("codex", "--gateway", "magpie"), ("-r", "codex")]:
-            self.run_installer(*args, success=False)
-            self.assertEqual((self.codex / "auth.json").read_bytes(), auth)
-            self.assertEqual(self.toml()["model_provider"], "cm")
-        self.run_cm("-r")
+    def test_switching_modes_is_just_reinstalling(self):
+        original = self.native_login()
         self.run_installer("codex")
-        self.assertFalse((self.codex / "auth.json").exists())
+        self.run_cm("--cm-key", "cm-key")
+        self.assertEqual(self.toml()["model_provider"], "cm")
+        # Leaving CodexManager puts back its provider fields and the login it replaced.
+        result = self.run_installer("codex", "--gateway", "magpie")
+        self.assertIn("Restored Codex login", result.stdout)
+        self.assertEqual((self.codex / "auth.json").read_bytes(), original)
+        self.assertNotIn("model_provider", self.toml())
+        self.assertEqual(self.toml()["model_context_window"], 872000)
+        self.assertFalse((self.codex / ".agent-kit/gateways").exists())
+        self.assertEqual((self.codex / "AGENTS.md").resolve(), self.repo / "instructions.md")
+        self.run_cm("--cm-key", "cm-key")
+        self.run_installer("codex")
+        self.assertEqual((self.codex / "auth.json").read_bytes(), original)
+        self.run_cm("--cm-key", "cm-key")
+        # A restore needs no gateway option.
+        self.run_installer("-r")
+        self.assertEqual((self.codex / "auth.json").read_bytes(), original)
+        self.assertEqual(self.toml().unwrap(), {"model": "gpt-6-astra", "model_context_window": 872000})
+        self.assertFalse((self.codex / "AGENTS.md").exists())
+        self.assertFalse((self.codex / ".agent-kit").exists())
 
     def test_conflicts_and_wrong_client_do_not_write_credentials(self):
         self.native_login()

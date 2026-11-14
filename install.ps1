@@ -1,6 +1,6 @@
 # Codex installation entry point. Compatible with PowerShell 5.1.
 [CmdletBinding()]
-param([switch]$Restore, [string]$Gateway, [string]$CmKey)
+param([switch]$Restore, [switch]$Copy, [string]$Gateway, [string]$CmKey)
 
 $ErrorActionPreference = 'Stop'
 $Python = Join-Path $PSScriptRoot '.venv/Scripts/python.exe'
@@ -27,6 +27,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 $Arguments = @((Join-Path $PSScriptRoot 'preferences.py'), 'codex')
 if ($Restore) { $Arguments += '--restore' }
+if ($Copy) { $Arguments += '--copy' }
 if ($Gateway) { $Arguments += @('--gateway', $Gateway) }
 if ($PSBoundParameters.ContainsKey('CmKey')) { $Arguments += @('--cm-key', $CmKey) }
 & $Python @Arguments
