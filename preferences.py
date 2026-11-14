@@ -3,7 +3,6 @@
 
 import argparse
 import copy
-import filecmp
 import importlib.util
 import json
 import os
@@ -293,17 +292,6 @@ def resource_sources(client):
     return sources
 
 
-def same_resource(left, right):
-    """Compare existing copies before adopting them, including skill support files."""
-    if left.is_symlink() or right.is_symlink():
-        return left.is_symlink() and right.is_symlink() and os.readlink(left) == os.readlink(right)
-    if left.is_dir() and right.is_dir():
-        names = {p.name for p in left.iterdir()}
-        return names == {p.name for p in right.iterdir()} and all(
-            same_resource(left / name, right / name) for name in names)
-    return left.is_file() and right.is_file() and filecmp.cmp(left, right, shallow=False)
-
-
 def resource_link(path, entry):
     return path.is_symlink() and os.readlink(path) in [entry["source"], *entry.get("previous", [])]
 
@@ -335,14 +323,12 @@ def plan_resources(client, directory, restore):
         if old is None:
             if saved.exists() or saved.is_symlink():
                 raise ValueError("resource backup already exists: " + str(saved))
+            # Whatever is there, a copy, local edits or a link elsewhere, moves to the backup as it is.
             old = {"source": str(source), "original": exists}
-            if exists and not resource_link(target, old) and not same_resource(target, source):
-                raise ValueError("resource differs from repository; keep or merge it first: " + str(target))
             records[relative] = old
         elif source is not None and exists and not resource_link(target, old):
             # Resume an interrupted first install before the original was moved.
-            if not (old["original"] and not saved.exists() and not saved.is_symlink()
-                    and same_resource(target, source)):
+            if not (old["original"] and not saved.exists() and not saved.is_symlink()):
                 raise ValueError("resource was replaced; keep or merge it first: " + str(target))
         if source is not None and old["source"] != str(source):
             old.setdefault("previous", []).append(old["source"])

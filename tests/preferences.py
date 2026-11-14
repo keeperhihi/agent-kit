@@ -254,12 +254,14 @@ trust_level = "trusted"
         self.run_installer("-r")
         self.assert_untouched()
 
-    def test_default_install_refuses_existing_external_resources(self):
+    def test_default_install_backs_up_existing_resources(self):
         self.existing()
-        original = (self.claude / "settings.json").read_bytes()
-        super().run_installer(success=False)
-        self.assertEqual((self.claude / "settings.json").read_bytes(), original)
-        self.assertFalse((self.claude / ".agent-kit").exists())
+        super().run_installer()
+        for directory, relative, source in [(self.claude, "CLAUDE.md", "instructions.md"),
+                                            (self.codex, "AGENTS.md", "instructions.md"),
+                                            (self.codex, "skills/example", "skills/example")]:
+            self.assertEqual((directory / relative).resolve(), self.repo / source)
+        super().run_installer("-r")
         self.assert_untouched()
 
     def test_single_dash_gateway_option_is_accepted(self):
@@ -325,27 +327,61 @@ class ResourcesTest(ReadyInstallerTest):
             self.assertFalse((client / ".agent-kit/resources.json").exists())
         self.assertEqual((self.codex / "skills/other/SKILL.md").read_text(), "# Unmanaged skill\n")
 
-    def test_resource_conflicts_stop_before_preferences_are_written(self):
-        for conflict in ["instructions", "support-file", "foreign-link", "linked-parent"]:
-            with self.subTest(conflict=conflict):
+    def test_differing_resources_are_backed_up_and_restored(self):
+        def snapshot(path):
+            if path.is_symlink():
+                return "link", os.readlink(path)
+            if path.is_dir():
+                return "directory", {str(p.relative_to(path)): p.read_bytes() for p in path.rglob("*") if p.is_file()}
+            return "file", path.read_bytes()
+
+        for case, relative, source in [("instructions", "CLAUDE.md", "instructions.md"),
+                                       ("support-file", "skills/example", "skills/example"),
+                                       ("foreign-link", "skills/example", "skills/example")]:
+            with self.subTest(case=case):
                 if self.claude.exists():
                     shutil.rmtree(self.claude)
-                self.write(self.claude / "settings.json", '{"theme":"light"}')
-                if conflict == "instructions":
+                if case == "instructions":
                     self.write(self.claude / "CLAUDE.md", "<!-- magpie:begin -->\n# Shared instructions\n")
-                elif conflict == "support-file":
+                elif case == "support-file":
                     shutil.copytree(self.repo / "skills", self.claude / "skills")
                     self.write(self.claude / "skills/example/scripts/check.sh", "echo local-edit\n")
-                elif conflict == "foreign-link":
-                    self.write(self.root / "magpie/example/SKILL.md", "# Example\n")
-                    (self.claude / "skills").mkdir()
-                    (self.claude / "skills/example").symlink_to(self.root / "magpie/example", target_is_directory=True)
                 else:
-                    (self.claude / "skills").symlink_to(self.repo / "skills", target_is_directory=True)
-                self.run_installer(success=False)
-                self.assertEqual((self.claude / "settings.json").read_text(), '{"theme":"light"}')
+                    self.write(self.root / "magpie/example/SKILL.md", "# Example\n")
+                    (self.claude / "skills").mkdir(parents=True)
+                    (self.claude / "skills/example").symlink_to(self.root / "magpie/example", target_is_directory=True)
+                target = self.claude / relative
+                original = snapshot(target)
+                self.run_installer("claude")
+                self.assertTrue(target.is_symlink())
+                self.assertEqual(target.resolve(), self.repo / source)
+                self.run_installer("-r", "claude")
+                self.assertEqual(snapshot(target), original)
                 self.assertFalse((self.claude / ".agent-kit").exists())
-                self.assertFalse(self.codex.exists())
+
+    def test_linked_skills_directory_stops_before_preferences_are_written(self):
+        self.write(self.claude / "settings.json", '{"theme":"light"}')
+        (self.claude / "skills").symlink_to(self.repo / "skills", target_is_directory=True)
+        self.run_installer(success=False)
+        self.assertEqual((self.claude / "settings.json").read_text(), '{"theme":"light"}')
+        self.assertFalse((self.claude / ".agent-kit").exists())
+        self.assertFalse(self.codex.exists())
+
+    @unittest.skipIf(os.geteuid() == 0, "requires ordinary user filesystem permissions")
+    def test_interrupted_takeover_of_a_differing_copy_resumes(self):
+        self.write(self.claude / "CLAUDE.md", "# My instructions\n")
+        backups = self.claude / ".agent-kit/resource-backups"
+        backups.mkdir(parents=True)
+        backups.chmod(0o500)
+        try:
+            self.run_installer("claude", success=False)
+        finally:
+            backups.chmod(0o700)
+        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# My instructions\n")
+        self.run_installer("claude")
+        self.assertEqual((self.claude / "CLAUDE.md").resolve(), self.repo / "instructions.md")
+        self.run_installer("-r", "claude")
+        self.assertEqual((self.claude / "CLAUDE.md").read_text(), "# My instructions\n")
 
     def test_rollback_preserves_a_manually_replaced_resource(self):
         self.existing_copies()
@@ -571,7 +607,7 @@ model_provider = "other"
 
     def test_conflicts_and_wrong_client_do_not_write_credentials(self):
         self.native_login()
-        self.write(self.codex / "AGENTS.md", "# Local instructions\n")
+        (self.codex / "skills").symlink_to(self.repo / "skills", target_is_directory=True)
         original = (self.codex / "auth.json").read_bytes()
         result = self.run_cm("--cm-key", "do-not-print-this-key", success=False)
         self.assertNotIn("do-not-print-this-key", result.stdout + result.stderr)
